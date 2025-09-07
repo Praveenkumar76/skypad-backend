@@ -1,10 +1,10 @@
 services:
   - type: web
     name: skypad-backend
-    env: docker
+    env: node
     plan: free
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    buildCommand: npm install && npm install pm2 -g
+    startCommand: pm2 start ecosystem.config.js --no-daemon
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
