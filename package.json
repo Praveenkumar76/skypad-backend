@@ -11,7 +11,8 @@
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:code-editor\"",
     "build": "echo 'No build step required for Node.js'",
     "render-postbuild": "npm install pm2 -g",
-    "render-start": "pm2 start ecosystem.config.js --no-daemon"
+    "render-start": "pm2 start ecosystem.config.js --no-daemon",
+    "start:production": "node src/server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -3,8 +3,8 @@ services:
     name: skypad-backend
     env: node
     plan: free
-    buildCommand: npm install && npm install pm2 -g
-    startCommand: pm2 start ecosystem.config.js --no-daemon
+    buildCommand: npm install
+    startCommand: npm run start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
