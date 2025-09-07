@@ -13,7 +13,7 @@ module.exports = {
     },
     {
       name: "skypad-code-editor",
-      script: "./codeEditorServer.js",   // 👈 your code editor entry point
+      script: "./src/codeEditorServer.js",
       cwd: "./",
       env: {
         NODE_ENV: "production",

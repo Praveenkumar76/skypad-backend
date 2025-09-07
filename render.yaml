@@ -3,6 +3,7 @@ services:
     name: skypad-backend
     env: node
     plan: free
+    rootDir: backend
     # Install deps and PM2 globally so the start command can find it
     buildCommand: npm ci && npm install -g pm2
     # Use pm2-runtime so Render treats one foreground process correctly
@@ -11,6 +12,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: 18.20.3
       - key: MONGODB_URI
         fromDatabase:
           name: skypad-mongodb
