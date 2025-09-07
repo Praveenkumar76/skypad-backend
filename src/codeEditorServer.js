@@ -176,9 +176,9 @@ io.on('connection', (socket) => {
   });
 
   // Chat messaging within a room
-  socket.on('chat', ({ roomId, message }) => {
+  socket.on('chat', ({ roomId, message, senderName }) => {
     if (!roomId || !message) return;
-    io.to(roomId).emit('chat', { id: socket.id, message, ts: Date.now() });
+    io.to(roomId).emit('chat', { id: socket.id, message, senderName, ts: Date.now() });
   });
 
   // Handle language change
