@@ -10,8 +10,14 @@ const app = express();
 const server = http.createServer(app);
 
 // CORS configuration
+const ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  process.env.FRONTEND_ORIGIN
+].filter(Boolean);
+
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:5173"], // Add your frontend URLs
+  origin: ALLOWED_ORIGINS,
   methods: ["GET", "POST"],
   credentials: true
 }));
@@ -19,7 +25,7 @@ app.use(cors({
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:5173"],
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -140,22 +146,39 @@ async function executeCode(code, language) {
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('A user connected to code editor');
-  
+
+  // Room joining for collaborative sessions
+  socket.on('join-room', (roomId) => {
+    if (!roomId) return;
+    socket.join(roomId);
+    socket.to(roomId).emit('system', { type: 'join', id: socket.id });
+  });
+
   // Send current code state to newly connected users
   socket.emit('initial-code', currentState);
 
   // Handle code changes
-  socket.on('code-change', (data) => {
+  socket.on('code-change', ({ roomId, ...data }) => {
     currentState = data;
-    // Broadcast to all clients except sender
-    socket.broadcast.emit('code-update', data);
+    if (roomId) {
+      socket.to(roomId).emit('code-update', data);
+    } else {
+      socket.broadcast.emit('code-update', data);
+    }
   });
 
   // Handle code execution
   socket.on('run-code', async (data) => {
     console.log(`Executing ${data.language} code...`);
     const result = await executeCode(data.code, data.language);
-    io.emit('run-result', result);
+    if (data.roomId) io.to(data.roomId).emit('run-result', result);
+    else io.emit('run-result', result);
+  });
+
+  // Chat messaging within a room
+  socket.on('chat', ({ roomId, message }) => {
+    if (!roomId || !message) return;
+    io.to(roomId).emit('chat', { id: socket.id, message, ts: Date.now() });
   });
 
   // Handle language change

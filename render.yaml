@@ -3,8 +3,10 @@ services:
     name: skypad-backend
     env: node
     plan: free
-    buildCommand: npm install
-    startCommand: npm run start
+    # Install deps and PM2 globally so the start command can find it
+    buildCommand: npm ci && npm install -g pm2
+    # Use pm2-runtime so Render treats one foreground process correctly
+    startCommand: pm2-runtime ecosystem.config.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -21,6 +23,8 @@ services:
         value: 5001
       - key: CORS_ORIGINS
         value: "*"
+      - key: FRONTEND_ORIGIN
+        value: https://sky-pad-ide.vercel.app
 
 databases:
   - name: skypad-mongodb
