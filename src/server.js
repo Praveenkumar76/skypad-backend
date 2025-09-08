@@ -133,6 +133,9 @@ io.on('connection', (socket) => {
 // Real-time collaborative editor and chat using Socket.IO rooms keyed by sessionId
 const interviewNamespace = io.of('/interview');
 
+// In-memory participants store per sessionId
+const sessionParticipants = new Map(); // Map<string, Array<{id:string,name:string}>>
+
 interviewNamespace.on('connection', (socket) => {
   // Join a specific interview session room
   socket.on('join-session', ({ sessionId, user }) => {
@@ -140,7 +143,22 @@ interviewNamespace.on('connection', (socket) => {
       if (!sessionId) return;
       socket.join(sessionId);
       socket.data.sessionId = sessionId;
+      if (user?.id) socket.data.userId = user.id;
       interviewNamespace.to(sessionId).emit('system', { type: 'join', user, timestamp: Date.now() });
+
+      // Track participants
+      const current = sessionParticipants.get(sessionId) || [];
+      const exists = current.find(p => p.id === user?.id);
+      let updated;
+      if (exists) {
+        updated = current.map(p => (p.id === user.id ? { id: user.id, name: user.name } : p));
+      } else if (user?.id) {
+        updated = [...current, { id: user.id, name: user.name || 'User' }];
+      } else {
+        updated = current;
+      }
+      sessionParticipants.set(sessionId, updated);
+      interviewNamespace.to(sessionId).emit('participants', updated);
     } catch (e) {
       // no-op
     }
@@ -163,6 +181,16 @@ interviewNamespace.on('connection', (socket) => {
   socket.on('chat-message', ({ sessionId, message }) => {
     if (!sessionId || !message) return;
     interviewNamespace.to(sessionId).emit('chat-message', message);
+  });
+
+  socket.on('disconnect', () => {
+    const sessionId = socket.data.sessionId;
+    const userId = socket.data.userId;
+    if (!sessionId || !userId) return;
+    const current = sessionParticipants.get(sessionId) || [];
+    const updated = current.filter(p => p.id !== userId);
+    sessionParticipants.set(sessionId, updated);
+    interviewNamespace.to(sessionId).emit('participants', updated);
   });
 });
 
