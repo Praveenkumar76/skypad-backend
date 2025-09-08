@@ -5,9 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js",
-    "code-editor": "node src/codeEditorServer.js",
-    "dev:code-editor": "nodemon src/codeEditorServer.js"
+    "start": "node src/server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
