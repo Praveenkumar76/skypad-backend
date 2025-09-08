@@ -49,6 +49,14 @@ app.use(helmet({
 }));
 app.use(morgan('dev'));
 
+// Return JSON for malformed JSON bodies instead of HTML Bad Request
+app.use((err, _req, res, next) => {
+  if (err && err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ message: 'Invalid JSON body' });
+  }
+  return next(err);
+});
+
 
 // --- Routers (no changes needed here) ---
 const authRouter = require('./routes/auth');
@@ -66,6 +74,11 @@ app.get('/api/health', (req, res) => {
 
 app.get('/', (_req, res) => {
   res.type('text').send('SkyPad-IDE API is running');
+});
+
+// Fallback 404 in JSON for unknown API routes
+app.use('/api', (req, res) => {
+  return res.status(404).json({ message: 'Not Found' });
 });
 
 
