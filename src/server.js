@@ -129,6 +129,43 @@ io.on('connection', (socket) => {
   });
 });
 
+// --- 5b. INTERVIEW COLLABORATION NAMESPACE ---
+// Real-time collaborative editor and chat using Socket.IO rooms keyed by sessionId
+const interviewNamespace = io.of('/interview');
+
+interviewNamespace.on('connection', (socket) => {
+  // Join a specific interview session room
+  socket.on('join-session', ({ sessionId, user }) => {
+    try {
+      if (!sessionId) return;
+      socket.join(sessionId);
+      socket.data.sessionId = sessionId;
+      interviewNamespace.to(sessionId).emit('system', { type: 'join', user, timestamp: Date.now() });
+    } catch (e) {
+      // no-op
+    }
+  });
+
+  // Broadcast code changes to everyone else in the same session
+  socket.on('code-change', ({ sessionId, code, language }) => {
+    if (!sessionId) return;
+    socket.to(sessionId).emit('code-update', { code, language });
+  });
+
+  // Execute code on server and return result to the room
+  socket.on('run-code', async ({ sessionId, code, language }) => {
+    if (!sessionId) return;
+    const result = await executeCode(code, language);
+    interviewNamespace.to(sessionId).emit('run-result', result);
+  });
+
+  // Chat message relay within the room
+  socket.on('chat-message', ({ sessionId, message }) => {
+    if (!sessionId || !message) return;
+    interviewNamespace.to(sessionId).emit('chat-message', message);
+  });
+});
+
 // --- 7. HEALTH CHECKS & FINAL ROUTES ---
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
