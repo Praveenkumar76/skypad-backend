@@ -135,6 +135,8 @@ const interviewNamespace = io.of('/interview');
 
 // In-memory participants store per sessionId
 const sessionParticipants = new Map(); // Map<string, Array<{id:string,name:string}>>
+// In-memory chat history per sessionId
+const sessionMessages = new Map(); // Map<string, Array<Message>>
 
 interviewNamespace.on('connection', (socket) => {
   // Join a specific interview session room
@@ -159,6 +161,10 @@ interviewNamespace.on('connection', (socket) => {
       }
       sessionParticipants.set(sessionId, updated);
       interviewNamespace.to(sessionId).emit('participants', updated);
+
+      // Send chat history to the newly joined client
+      const history = sessionMessages.get(sessionId) || [];
+      socket.emit('chat-history', history);
     } catch (e) {
       // no-op
     }
@@ -180,7 +186,18 @@ interviewNamespace.on('connection', (socket) => {
   // Chat message relay within the room
   socket.on('chat-message', ({ sessionId, message }) => {
     if (!sessionId || !message) return;
-    interviewNamespace.to(sessionId).emit('chat-message', message);
+    // Append to session history
+    const list = sessionMessages.get(sessionId) || [];
+    const normalized = {
+      id: message.id || Date.now(),
+      sender: message.sender || 'Anonymous',
+      content: message.content || '',
+      timestamp: message.timestamp || new Date().toISOString()
+    };
+    const updated = [...list, normalized];
+    sessionMessages.set(sessionId, updated);
+
+    interviewNamespace.to(sessionId).emit('chat-message', normalized);
   });
 
   socket.on('disconnect', () => {
