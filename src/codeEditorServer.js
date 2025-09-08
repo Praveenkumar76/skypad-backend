@@ -9,21 +9,38 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// CORS configuration
-app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:5173"], // Add your frontend URLs
+// --- START: CORS CONFIGURATION FIX ---
+
+// 1. Define the list of all allowed frontend domains.
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://sky-pad-ide.vercel.app" // Your deployed frontend URL
+];
+
+// 2. Create a reusable CORS options object.
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests from whitelisted origins and server-to-server requests (where origin is undefined)
+    if (allowedOrigins.includes(origin) || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ["GET", "POST"],
   credentials: true
-}));
+};
 
-// Socket.IO setup
+// 3. Apply the fixed CORS options to both Express (for HTTP requests) and Socket.IO (for WebSockets).
+app.use(cors(corsOptions));
+
 const io = new Server(server, {
-  cors: {
-    origin: ["http://localhost:3000", "http://localhost:5173"],
-    methods: ["GET", "POST"],
-    credentials: true
-  }
+  cors: corsOptions // Use the same options here
 });
+
+// --- END: CORS CONFIGURATION FIX ---
+
 
 // Store current code state
 let currentState = {
@@ -141,30 +158,24 @@ async function executeCode(code, language) {
 io.on('connection', (socket) => {
   console.log('A user connected to code editor');
   
-  // Send current code state to newly connected users
   socket.emit('initial-code', currentState);
 
-  // Handle code changes
   socket.on('code-change', (data) => {
     currentState = data;
-    // Broadcast to all clients except sender
     socket.broadcast.emit('code-update', data);
   });
 
-  // Handle code execution
   socket.on('run-code', async (data) => {
     console.log(`Executing ${data.language} code...`);
     const result = await executeCode(data.code, data.language);
     io.emit('run-result', result);
   });
 
-  // Handle language change
   socket.on('language-change', (data) => {
     currentState.language = data.language;
     socket.broadcast.emit('language-update', data);
   });
 
-  // Handle disconnect
   socket.on('disconnect', () => {
     console.log('A user disconnected from code editor');
   });
@@ -186,12 +197,11 @@ app.get('/languages', (req, res) => {
   });
 });
 
-const PORT = process.env.CODE_EDITOR_PORT || 3002;
+const PORT = process.env.PORT || 3002; // Render uses PORT, not a custom name
 
 server.listen(PORT, () => {
   console.log(`🚀 Code Editor WebSocket server running on port ${PORT}`);
   console.log(`📝 Supported languages: ${Object.keys(languageConfigs).join(', ')}`);
-  console.log(`🔌 WebSocket endpoint: ws://localhost:${PORT}`);
 });
 
 module.exports = { server, io };
