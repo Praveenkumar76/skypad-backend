@@ -5,15 +5,43 @@ const morgan = require('morgan');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
-
 const { connectToDatabase } = require('./db/mongoose');
 
 const app = express();
 
-// Middleware
-app.use(cors({ origin: true, credentials: true }));
-// Handle CORS preflight for all routes
-app.options('*', cors());
+// --- START: CORS CONFIGURATION FIX ---
+
+// 1. Define the list of domains that are allowed to access your backend.
+const allowedOrigins = [
+  'http://localhost:3000',          // Common local development port for React
+  'http://localhost:5173',          // Common local development port for Vite
+  'https://sky-pad-ide.vercel.app'  // Your deployed frontend URL
+];
+
+// 2. Create the CORS options object.
+const corsOptions = {
+  origin: (origin, callback) => {
+    // The 'origin' is the URL of the site making the request (e.g., your Vercel URL).
+    // We check if this origin is in our allowed list.
+    // '!origin' allows server-to-server requests (like from Postman or other tools).
+    if (allowedOrigins.includes(origin) || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true, // This allows the frontend to send cookies and authorization headers.
+  optionsSuccessStatus: 200 // For legacy browser support.
+};
+
+// 3. Apply the CORS middleware with the new options.
+// This single configuration handles all requests, including pre-flight OPTIONS requests.
+app.use(cors(corsOptions));
+
+// --- END: CORS CONFIGURATION FIX ---
+
+
+// --- Other Middleware (no changes needed here) ---
 app.use(express.json());
 app.use(helmet({
   // Allow cross-origin fetches of API responses from the frontend dev server
@@ -21,7 +49,8 @@ app.use(helmet({
 }));
 app.use(morgan('dev'));
 
-// Routers
+
+// --- Routers (no changes needed here) ---
 const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
 const problemsRouter = require('./routes/problems');
@@ -29,16 +58,18 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/problems', problemsRouter);
 
-// Health check
+
+// --- Health check and Root Route (no changes needed here) ---
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Root route (avoid 404 when visiting http://localhost:5000)
 app.get('/', (_req, res) => {
   res.type('text').send('SkyPad-IDE API is running');
 });
 
+
+// --- Server Start Logic (no changes needed here) ---
 const PORT = process.env.PORT || 5000;
 
 connectToDatabase().then(() => {
@@ -53,5 +84,3 @@ connectToDatabase().then(() => {
     console.log(`Backend listening on http://localhost:${PORT} (without database)`);
   });
 });
-
-
