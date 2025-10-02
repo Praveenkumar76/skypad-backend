@@ -1,1 +1,12 @@
 .env
+node_modules/
+.dist
+.build
+.next
+.out
+.storybook-out
+.temp
+.tmp
+.vscode
+.idea
+.DS_Store

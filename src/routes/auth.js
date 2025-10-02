@@ -63,6 +63,7 @@ router.post('/login', async (req, res) => {
     const token = createToken({ sub: user.id, email: user.email, username: user.username, fullName: safeFullName });
     return res.json({ token, user: { id: user.id, email: user.email, username: user.username, fullName: safeFullName }, lastLoginAt: user.lastLoginAt });
   } catch (err) {
+    console.error('Login error:', err && err.message ? err.message : err);
     return res.status(500).json({ message: 'Login failed' });
   }
 });

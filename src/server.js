@@ -98,7 +98,88 @@ async function executeCode(code, language) {
                         else resolve({ success: true, output: stdout });
                     });
                 });
-            // Add cases for 'cpp', 'java', 'c' here if needed
+            case 'java': {
+                // Create a temporary directory to hold Java files and class outputs
+                const tempDir = path.join(__dirname, `java_${Date.now()}`);
+                await fs.mkdir(tempDir, { recursive: true });
+                // Try to detect public class name; default to Main if not found
+                const classMatch = code.match(/public\s+class\s+(\w+)/);
+                const className = classMatch ? classMatch[1] : 'Main';
+                const javaFilePath = path.join(tempDir, `${className}.java`);
+                await fs.writeFile(javaFilePath, code);
+
+                return new Promise((resolve) => {
+                    // Compile
+                    exec(`javac "${javaFilePath}"`, { cwd: tempDir, timeout: 15000 }, async (compileErr, _stdout, compileStderr) => {
+                        if (compileErr) {
+                            // Cleanup directory
+                            try { await fs.rm(tempDir, { recursive: true, force: true }); } catch (_) {}
+                            resolve({ success: false, output: compileStderr || compileErr.message });
+                            return;
+                        }
+                        // Run
+                        exec(`java -cp . ${className}`, { cwd: tempDir, timeout: 15000 }, async (runErr, runStdout, runStderr) => {
+                            // Cleanup directory
+                            try { await fs.rm(tempDir, { recursive: true, force: true }); } catch (_) {}
+                            if (runErr) resolve({ success: false, output: runStderr || runErr.message });
+                            else resolve({ success: true, output: runStdout });
+                        });
+                    });
+                });
+            }
+            case 'c': {
+                // Write to a temporary C file and compile
+                const cFilePath = await createTempFile(code, '.c');
+                const exePath = cFilePath.replace(/\.c$/, process.platform === 'win32' ? '.exe' : '');
+                return new Promise((resolve) => {
+                    const compileCmd = process.platform === 'win32'
+                        ? `gcc "${cFilePath}" -O2 -std=c11 -o "${exePath}"`
+                        : `gcc "${cFilePath}" -O2 -std=c11 -o "${exePath}"`;
+                    exec(compileCmd, { timeout: 20000 }, (compileErr, _stdout, compileStderr) => {
+                        const runAndCleanup = async () => {
+                            try { await deleteTempFile(cFilePath); } catch (_) {}
+                        };
+                        if (compileErr) {
+                            runAndCleanup().then(() => resolve({ success: false, output: compileStderr || compileErr.message }));
+                            return;
+                        }
+                        const runCmd = process.platform === 'win32' ? `"${exePath}"` : `"${exePath}"`;
+                        exec(runCmd, { timeout: 15000 }, async (runErr, runStdout, runStderr) => {
+                            await runAndCleanup();
+                            // Also remove the compiled binary
+                            try { await fs.unlink(exePath); } catch (_) {}
+                            if (runErr) resolve({ success: false, output: runStderr || runErr.message });
+                            else resolve({ success: true, output: runStdout });
+                        });
+                    });
+                });
+            }
+            case 'cpp':
+            case 'c++': {
+                // Write to a temporary C++ file and compile
+                const cppFilePath = await createTempFile(code, '.cpp');
+                const exePath = cppFilePath.replace(/\.cpp$/, process.platform === 'win32' ? '.exe' : '');
+                return new Promise((resolve) => {
+                    const compileCmd = `g++ "${cppFilePath}" -O2 -std=c++17 -o "${exePath}"`;
+                    exec(compileCmd, { timeout: 30000 }, (compileErr, _stdout, compileStderr) => {
+                        const runAndCleanup = async () => {
+                            try { await deleteTempFile(cppFilePath); } catch (_) {}
+                        };
+                        if (compileErr) {
+                            runAndCleanup().then(() => resolve({ success: false, output: compileStderr || compileErr.message }));
+                            return;
+                        }
+                        const runCmd = process.platform === 'win32' ? `"${exePath}"` : `"${exePath}"`;
+                        exec(runCmd, { timeout: 15000 }, async (runErr, runStdout, runStderr) => {
+                            await runAndCleanup();
+                            // Also remove the compiled binary
+                            try { await fs.unlink(exePath); } catch (_) {}
+                            if (runErr) resolve({ success: false, output: runStderr || runErr.message });
+                            else resolve({ success: true, output: runStdout });
+                        });
+                    });
+                });
+            }
             default:
                 return { success: false, output: `Language "${language}" is not supported.` };
         }
