@@ -83,4 +83,64 @@ router.put('/profile', authenticateToken, async (req, res) => {
   }
 });
 
+// POST /api/users/solved - Mark problem as solved
+router.post('/solved', authenticateToken, async (req, res) => {
+  try {
+    const { problemId, language } = req.body;
+    
+    if (!problemId) {
+      return res.status(400).json({ message: 'problemId is required' });
+    }
+    
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Check if already solved
+    const alreadySolved = user.solvedProblems?.some(
+      sp => sp.problemId.toString() === problemId
+    );
+    
+    if (!alreadySolved) {
+      if (!user.solvedProblems) user.solvedProblems = [];
+      user.solvedProblems.push({
+        problemId,
+        solvedAt: new Date(),
+        language: language || 'JavaScript'
+      });
+      await user.save();
+    }
+    
+    res.json({ 
+      message: 'Problem marked as solved',
+      solvedProblems: user.solvedProblems.map(sp => sp.problemId.toString())
+    });
+  } catch (error) {
+    console.error('Mark solved error:', error);
+    res.status(500).json({ message: 'Failed to mark problem as solved' });
+  }
+});
+
+// GET /api/users/solved - Get user's solved problems
+router.get('/solved', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('solvedProblems');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const solvedProblemIds = (user.solvedProblems || []).map(sp => sp.problemId.toString());
+    
+    res.json({ 
+      solvedProblems: solvedProblemIds,
+      count: solvedProblemIds.length
+    });
+  } catch (error) {
+    console.error('Get solved problems error:', error);
+    res.status(500).json({ message: 'Failed to fetch solved problems' });
+  }
+});
+
 module.exports = router;

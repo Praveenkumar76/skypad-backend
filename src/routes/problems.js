@@ -108,12 +108,18 @@ router.post('/', authenticateToken, async (req, res) => {
     
     res.status(201).json({
       message: 'Problem created successfully',
-      problem: {
-        id: problem._id,
-        title: problem.title,
-        difficulty: problem.difficulty,
-        createdAt: problem.createdAt
-      }
+      _id: problem._id,
+      title: problem.title,
+      description: problem.description,
+      difficulty: problem.difficulty,
+      constraints: problem.constraints,
+      sampleTestCases: problem.sampleTestCases,
+      hiddenTestCases: problem.hiddenTestCases,
+      allowedLanguages: problem.allowedLanguages,
+      timeLimit: problem.timeLimit,
+      memoryLimit: problem.memoryLimit,
+      tags: problem.tags,
+      createdAt: problem.createdAt
     });
   } catch (error) {
     console.error('Create problem error:', error);
