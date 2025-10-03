@@ -19,23 +19,36 @@ const server = http.createServer(app); // Use http server to attach Socket.IO
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
-  'https://sky-pad-ide.vercel.app' // Your deployed frontend
+  'http://localhost:5174',
+  'https://sky-pad-ide.vercel.app',
+  'https://sky-pad-ide-sec.vercel.app',  // Add all possible Vercel URLs
 ];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (allowedOrigins.includes(origin) || !origin) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list or matches Vercel pattern
+    if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
+      console.log('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
-  optionsSuccessStatus: 200
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 };
 
 // --- 3. MIDDLEWARE ---
+// Apply CORS before other middleware
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));  // Enable pre-flight for all routes
 app.use(express.json());
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }
@@ -52,7 +65,17 @@ app.use('/api/problems', problemsRouter);
 
 // --- 5. SETUP AND ATTACH SOCKET.IO ---
 const io = new Server(server, {
-  cors: corsOptions
+  cors: {
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST']
+  }
 });
 
 // --- 6. CODE EDITOR LOGIC (MERGED FROM codeEditorServer.js) ---
