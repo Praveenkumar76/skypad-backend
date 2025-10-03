@@ -7,7 +7,7 @@ const router = express.Router();
 // GET /api/problems - Get all problems (public)
 router.get('/', async (req, res) => {
   try {
-    const { difficulty, search, page = 1, limit = 10 } = req.query;
+    const { difficulty, search, page = 1, limit = 10000 } = req.query;  // Increased default limit
     const query = { isActive: true };
     
     if (difficulty) {
@@ -18,18 +18,20 @@ router.get('/', async (req, res) => {
       query.$text = { $search: search };
     }
     
+    const actualLimit = Math.min(parseInt(limit), 10000);  // Max 10000 problems
+    
     const problems = await Problem.find(query)
       .select('-hiddenTestCases -__v')
       .populate('createdBy', 'username fullName')
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .limit(actualLimit)
+      .skip((page - 1) * actualLimit);
     
     const total = await Problem.countDocuments(query);
     
     res.json({
       problems,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(total / actualLimit),
       currentPage: page,
       total
     });
