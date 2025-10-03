@@ -272,25 +272,29 @@ router.post('/run', authenticateToken, async (req, res) => {
         buildResult.cleanup = async () => { try { await fs.unlink(file); } catch (_) {} };
       } else if (language === 'Python') {
         const file = await writeTemp(code, '.py', workDir);
-        buildResult.run = async (input) => runWithInput('python', [file], input, workDir, problem.timeLimit || 15000);
+        const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+        buildResult.run = async (input) => runWithInput(pythonCmd, [file], input, workDir, problem.timeLimit || 15000);
         buildResult.cleanup = async () => { try { await fs.unlink(file); } catch (_) {} };
       } else if (language === 'Java') {
         // Enforce Main class for simplicity
         const javaFile = path.join(workDir, 'Main.java');
         await fs.writeFile(javaFile, code, 'utf8');
-        const compile = await runWithInput(process.platform === 'win32' ? 'javac.exe' : 'javac', ['Main.java'], '', workDir, 20000);
+        const javacCmd = process.platform === 'win32' ? 'javac' : 'javac';
+        const javaCmd = process.platform === 'win32' ? 'java' : 'java';
+        const compile = await runWithInput(javacCmd, ['Main.java'], '', workDir, 20000);
         if (!compile.ok) {
-          buildResult = { ok: false, error: compile.stderr || 'Java compilation failed' };
+          buildResult = { ok: false, error: compile.stderr || 'Java compilation failed. Make sure Java JDK is installed.' };
         } else {
-          buildResult.run = async (input) => runWithInput(process.platform === 'win32' ? 'java.exe' : 'java', ['Main'], input, workDir, problem.timeLimit || 15000);
+          buildResult.run = async (input) => runWithInput(javaCmd, ['Main'], input, workDir, problem.timeLimit || 15000);
         }
       } else if (language === 'C') {
         const cFile = path.join(workDir, 'main.c');
         await fs.writeFile(cFile, code, 'utf8');
         const exe = path.join(workDir, process.platform === 'win32' ? 'main.exe' : 'main');
-        const compile = await runWithInput(process.platform === 'win32' ? 'gcc.exe' : 'gcc', [cFile, '-O2', '-std=c11', '-o', exe], '', workDir, 30000);
+        const gccCmd = process.platform === 'win32' ? 'gcc' : 'gcc';
+        const compile = await runWithInput(gccCmd, [cFile, '-O2', '-std=c11', '-o', exe], '', workDir, 30000);
         if (!compile.ok) {
-          buildResult = { ok: false, error: compile.stderr || 'C compilation failed' };
+          buildResult = { ok: false, error: compile.stderr || 'C compilation failed. Make sure GCC is installed.' };
         } else {
           buildResult.run = async (input) => runWithInput(exe, [], input, workDir, problem.timeLimit || 15000);
         }
@@ -298,14 +302,15 @@ router.post('/run', authenticateToken, async (req, res) => {
         const cppFile = path.join(workDir, 'main.cpp');
         await fs.writeFile(cppFile, code, 'utf8');
         const exe = path.join(workDir, process.platform === 'win32' ? 'main.exe' : 'main');
-        const compile = await runWithInput(process.platform === 'win32' ? 'g++.exe' : 'g++', [cppFile, '-O2', '-std=c++17', '-o', exe], '', workDir, 30000);
+        const gppCmd = process.platform === 'win32' ? 'g++' : 'g++';
+        const compile = await runWithInput(gppCmd, [cppFile, '-O2', '-std=c++17', '-o', exe], '', workDir, 30000);
         if (!compile.ok) {
-          buildResult = { ok: false, error: compile.stderr || 'C++ compilation failed' };
+          buildResult = { ok: false, error: compile.stderr || 'C++ compilation failed. Make sure G++ is installed.' };
         } else {
           buildResult.run = async (input) => runWithInput(exe, [], input, workDir, problem.timeLimit || 15000);
         }
       } else {
-        return res.status(400).json({ message: `Language ${language} not supported` });
+        return res.status(400).json({ message: `Language ${language} not supported. Supported: JavaScript, Python, Java, C++, C` });
       }
 
       if (!buildResult.ok) {
