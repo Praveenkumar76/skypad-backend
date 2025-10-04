@@ -21,7 +21,8 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'https://sky-pad-ide.vercel.app',
-  'https://sky-pad-ide-sec.vercel.app',  // Add all possible Vercel URLs
+  'https://sky-pad-ide-sec.vercel.app',
+  'https://skypad-ide.vercel.app',  // Add all possible Vercel URLs
 ];
 
 const corsOptions = {
@@ -31,6 +32,7 @@ const corsOptions = {
     
     // Check if origin is in allowed list or matches Vercel pattern
     if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+      console.log('CORS allowing origin:', origin);
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
@@ -49,6 +51,23 @@ const corsOptions = {
 // Apply CORS before other middleware
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));  // Enable pre-flight for all routes
+
+// Add CORS debugging middleware
+app.use((req, res, next) => {
+  console.log('Request origin:', req.headers.origin);
+  console.log('Request method:', req.method);
+  console.log('Request path:', req.path);
+  next();
+});
+
+// CORS test endpoint
+app.get('/api/cors-test', (req, res) => {
+  res.json({ 
+    message: 'CORS is working!', 
+    origin: req.headers.origin,
+    timestamp: new Date().toISOString()
+  });
+});
 app.use(express.json());
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }
