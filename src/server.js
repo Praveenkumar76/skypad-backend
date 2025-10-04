@@ -78,9 +78,11 @@ app.use(morgan('dev'));
 const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
 const problemsRouter = require('./routes/problems');
+const contestsRouter = require('./routes/contests');
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/problems', problemsRouter);
+app.use('/api/contests', contestsRouter);
 
 // --- 5. SETUP AND ATTACH SOCKET.IO ---
 const io = new Server(server, {
