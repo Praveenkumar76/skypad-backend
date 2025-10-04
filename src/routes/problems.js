@@ -219,6 +219,16 @@ router.post('/run', authenticateToken, async (req, res) => {
       return normalizeOutput(expected) === normalizeOutput(actual);
     }
 
+    // Clean user input so formats like [1,2,3] become "1 2 3"
+    function sanitizeInput(input) {
+      if (!input || typeof input !== 'string') return '';
+      return input
+        .replace(/[\[\]]/g, ' ')  // Replace [ and ] with spaces
+        .replace(/,/g, ' ')        // Replace commas with spaces
+        .replace(/\s+/g, ' ')      // Replace multiple spaces with single space
+        .trim();                   // Remove leading/trailing spaces
+    }
+
     async function writeTemp(contents, ext, dir) {
       const file = path.join(dir, `prog_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`);
       await fs.writeFile(file, contents, 'utf8');
@@ -321,7 +331,9 @@ router.post('/run', authenticateToken, async (req, res) => {
       }
 
       async function runOne(input) {
-        const result = await buildResult.run(String(input ?? ''));
+        // Clean user input so formats like [1,2,3] become "1 2 3"
+        const sanitizedInput = sanitizeInput(String(input ?? ''));
+        const result = await buildResult.run(sanitizedInput);
         if (!result.ok) {
           return { ok: false, error: result.stderr || 'Runtime error', stdout: result.stdout };
         }
