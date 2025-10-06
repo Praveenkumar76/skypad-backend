@@ -336,6 +336,167 @@ interviewNamespace.on('connection', (socket) => {
   });
 });
 
+// --- 5c. CHALLENGE DUEL NAMESPACE ---
+// Lightweight real-time room sync for two-player problem-solving duels
+const challengeNamespace = io.of('/challenge');
+
+// In-memory room store keyed by roomId
+// Structure: { id, name, host, players: [{id,name,email,joinedAt}], status, createdAt, selectedProblem, scores, waitingEndsAt, challengeEndsAt, endedAt, winnerId }
+const challengeRooms = new Map();
+
+function getChallengeDurationSeconds(problemDifficulty) {
+  const map = { Easy: 15 * 60, Medium: 30 * 60, Hard: 50 * 60 };
+  return map[problemDifficulty] || 30 * 60;
+}
+
+function computeReward(problemDifficulty) {
+  const rewardMap = { Easy: 10, Medium: 20, Hard: 30 };
+  return rewardMap[problemDifficulty] || 20;
+}
+
+function pruneEmptyRoom(roomId) {
+  const room = challengeRooms.get(roomId);
+  if (!room) return;
+  const players = room.players || [];
+  if (players.length === 0) {
+    challengeRooms.delete(roomId);
+  }
+}
+
+challengeNamespace.on('connection', (socket) => {
+  // Client requests to join a room
+  socket.on('join-room', ({ roomId, user }) => {
+    if (!roomId) return;
+    socket.join(roomId);
+    socket.data.roomId = roomId;
+    const nowIso = new Date().toISOString();
+
+    let room = challengeRooms.get(roomId);
+    if (!room) {
+      // Create new room with waiting window of 120s
+      room = {
+        id: roomId,
+        name: `Room ${String(roomId).slice(0, 8)}`,
+        host: user?.id,
+        players: [],
+        status: 'waiting',
+        createdAt: nowIso,
+        selectedProblem: null,
+        scores: {},
+        waitingEndsAt: new Date(Date.now() + 120000).toISOString(),
+      };
+      challengeRooms.set(roomId, room);
+    }
+
+    // Add/update player if capacity (<2)
+    const exists = room.players.find((p) => p.id === user?.id);
+    if (!exists && room.players.length < 2 && user?.id) {
+      room.players.push({
+        id: user.id,
+        name: user.name || 'Player',
+        email: user.email || '',
+        joinedAt: nowIso,
+      });
+    }
+
+    // If host missing, set to first player
+    if (!room.host && room.players[0]) {
+      room.host = room.players[0].id;
+    }
+
+    // Emit current state to everyone
+    challengeNamespace.to(roomId).emit('room-state', room);
+  });
+
+  // Host selects a problem to start the challenge
+  socket.on('select-problem', ({ roomId, problem }) => {
+    if (!roomId || !problem) return;
+    const room = challengeRooms.get(roomId);
+    if (!room) return;
+
+    // Only host can start
+    const isHost = socket.handshake?.auth?.userId === room.host || socket.data.userId === room.host;
+    // If we cannot validate via socket auth, allow selection but rely on client UI to restrict
+
+    const difficulty = problem.difficulty || 'Medium';
+    const durationSec = getChallengeDurationSeconds(difficulty);
+    const challengeEndsAt = new Date(Date.now() + durationSec * 1000).toISOString();
+
+    // Persist minimal problem fields to reduce payload size
+    room.selectedProblem = {
+      _id: problem._id,
+      title: problem.title,
+      description: problem.description,
+      difficulty: difficulty,
+      constraints: problem.constraints,
+      allowedLanguages: problem.allowedLanguages,
+      tags: problem.tags,
+    };
+    room.status = 'active';
+    room.challengeEndsAt = challengeEndsAt;
+
+    challengeNamespace.to(roomId).emit('room-state', room);
+  });
+
+  // Score updates from clients after running tests
+  socket.on('score-update', ({ roomId, playerId, passed, total, percentage }) => {
+    if (!roomId || !playerId) return;
+    const room = challengeRooms.get(roomId);
+    if (!room) return;
+
+    room.scores = room.scores || {};
+    room.scores[playerId] = {
+      passed: Number(passed) || 0,
+      total: Number(total) || 0,
+      percentage: Number(percentage) || 0,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    // Check for immediate winner: fully solved
+    const playerScore = room.scores[playerId];
+    const everyone = Object.values(room.scores || {});
+    let winnerId = null;
+    if (playerScore && playerScore.total > 0 && playerScore.passed === playerScore.total) {
+      winnerId = playerId;
+    } else if (everyone.length >= 2) {
+      // Decide winner if challenge already ended (client may call end). We keep basic comparison.
+      const entries = Object.entries(room.scores);
+      const [aId, a] = entries[0];
+      const [bId, b] = entries[1];
+      if ((a.passed > b.passed) || (a.passed === b.passed && a.percentage > b.percentage)) winnerId = aId;
+      else if ((b.passed > a.passed) || (a.passed === b.passed && b.percentage > a.percentage)) winnerId = bId;
+    }
+
+    if (winnerId && room.status !== 'ended') {
+      room.status = 'ended';
+      room.endedAt = new Date().toISOString();
+      room.winnerId = winnerId;
+      room.reward = computeReward(room.selectedProblem?.difficulty || 'Medium');
+      challengeNamespace.to(roomId).emit('end-challenge', room);
+    } else {
+      // Otherwise broadcast score/state update
+      challengeNamespace.to(roomId).emit('room-state', room);
+    }
+  });
+
+  // Client requests the latest state explicitly
+  socket.on('request-state', ({ roomId }) => {
+    if (!roomId) return;
+    const room = challengeRooms.get(roomId);
+    if (room) challengeNamespace.to(roomId).emit('room-state', room);
+  });
+
+  socket.on('disconnect', () => {
+    const roomId = socket.data.roomId;
+    if (!roomId) return;
+    const room = challengeRooms.get(roomId);
+    if (!room) return;
+    // We don't know which user disconnected reliably; clients should also announce leaves.
+    // If room becomes empty, prune.
+    setTimeout(() => pruneEmptyRoom(roomId), 30000);
+  });
+});
+
 // --- 7. HEALTH CHECKS & FINAL ROUTES ---
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
