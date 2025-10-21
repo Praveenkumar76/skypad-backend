@@ -23,7 +23,8 @@ const userSchema = new mongoose.Schema(
       lastActive: { type: Date, default: Date.now },
       globalRank: { type: Number, default: 0 },
       rating: { type: Number, default: 1200 },
-      maxRating: { type: Number, default: 1200 }
+      maxRating: { type: Number, default: 1200 },
+      coins: { type: Number, default: 100 } // Starting coins for new users
     },
     
     // Contest Statistics
@@ -32,6 +33,16 @@ const userSchema = new mongoose.Schema(
       won: { type: Number, default: 0 },
       averageRank: { type: Number, default: 0 },
       bestRank: { type: Number, default: 0 }
+    },
+    
+    // 1v1 Challenge Statistics
+    challengeStats: {
+      matches: { type: Number, default: 0 },
+      wins: { type: Number, default: 0 },
+      losses: { type: Number, default: 0 },
+      winRate: { type: Number, default: 0 }, // percentage
+      fastestWin: { type: Number, default: 0 }, // in seconds
+      totalRewards: { type: Number, default: 0 } // total coins earned
     },
     
     // Problem Solving Progress by Difficulty
@@ -70,9 +81,9 @@ const userSchema = new mongoose.Schema(
     // Solved Problems
     solvedProblems: [{
       problemId: { type: String, required: true },
-      title: { type: String, required: true },
-      difficulty: { type: String, enum: ['Easy', 'Medium', 'Hard'], required: true },
-      topic: { type: String, required: true },
+      title: { type: String, required: false, default: 'Unknown' },
+      difficulty: { type: String, enum: ['Easy', 'Medium', 'Hard'], required: false, default: 'Medium' },
+      topic: { type: String, required: false, default: 'General' },
       solvedAt: { type: Date, default: Date.now },
       timeSpent: { type: Number, default: 0 }, // in minutes
       points: { type: Number, default: 0 }

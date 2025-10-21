@@ -1,8 +1,12 @@
 const mongoose = require('mongoose');
 
 const MONGODB_URI = process.env.MONGODB_URI || '';
+console.log('[MongoDB] MONGODB_URI:', MONGODB_URI);
 
 async function connectToDatabase() {
+  console.log('[MongoDB] MONGODB_URI exists:', !!MONGODB_URI);
+  console.log('[MongoDB] URI length:', MONGODB_URI.length);
+  
   if (!MONGODB_URI) {
     // eslint-disable-next-line no-console
     console.warn('[MongoDB] MONGODB_URI not set. Skipping DB connection.');
