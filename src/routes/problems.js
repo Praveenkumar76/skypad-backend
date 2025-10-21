@@ -323,29 +323,36 @@ router.post('/run', authenticateToken, async (req, res) => {
           const expectedNum = parseFloat(expectedOutput);
           
           if (language.toLowerCase() === 'python') {
-            // Check for print statements with the expected number
+            // ONLY pass if code directly prints the exact expected number
             const directPrintMatch = code.includes(`print(${expectedNum})`);
-            const printVarMatch = /print\s*\(\s*\w+\s*\)/.test(code);
-            const returnMatch = code.includes(`return ${expectedNum}`);
+            const directReturnMatch = code.includes(`return ${expectedNum}`);
             
-            if (directPrintMatch || printVarMatch || returnMatch) {
+            if (directPrintMatch || directReturnMatch) {
               actualOutput = expectedOutput;
               passed = true;
+            } else {
+              actualOutput = `Expected ${expectedOutput} but code doesn't print this exact value`;
+              passed = false;
             }
           } else if (language.toLowerCase() === 'javascript') {
             const directConsoleMatch = code.includes(`console.log(${expectedNum})`);
-            const consoleVarMatch = /console\.log\s*\(\s*\w+\s*\)/.test(code);
-            const returnMatch = code.includes(`return ${expectedNum}`);
+            const directReturnMatch = code.includes(`return ${expectedNum}`);
             
-            if (directConsoleMatch || consoleVarMatch || returnMatch) {
+            if (directConsoleMatch || directReturnMatch) {
               actualOutput = expectedOutput;
               passed = true;
+            } else {
+              actualOutput = `Expected ${expectedOutput} but code doesn't print this exact value`;
+              passed = false;
             }
           } else {
-            // For other languages, check if the expected number appears in the code
+            // For other languages, only pass if exact number appears in print/output statement
             if (code.includes(expectedNum.toString())) {
               actualOutput = expectedOutput;
               passed = true;
+            } else {
+              actualOutput = `Expected ${expectedOutput} but code doesn't print this exact value`;
+              passed = false;
             }
           }
         }

@@ -34,6 +34,11 @@ const contestSchema = new mongoose.Schema(
       required: true,
       unique: true
     },
+    password: {
+      type: String,
+      required: true,
+      minlength: 6
+    },
     creatorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -53,6 +58,34 @@ const contestSchema = new mongoose.Schema(
       problemId: { type: String, required: true },
       points: { type: Number, required: true, default: 10 },
       order: { type: Number, required: true }
+    }],
+    // Contest questions (embedded questions for the contest)
+    questions: [{
+      title: { type: String, required: true },
+      description: { type: String, required: true },
+      difficulty: { type: String, enum: ['Easy', 'Medium', 'Hard'], required: true },
+      constraints: { type: String, required: true },
+      sampleTestCases: [{
+        input: { type: String, required: true },
+        output: { type: String, required: true },
+        explanation: { type: String }
+      }],
+      hiddenTestCases: [{
+        input: { type: String, required: true },
+        output: { type: String, required: true }
+      }],
+      timeLimit: { type: Number, default: 2000 },
+      memoryLimit: { type: Number, default: 256 },
+      points: { type: Number, required: true, default: 100 },
+      order: { type: Number, required: true },
+      tags: [String],
+      questionId: { type: String, required: true }
+    }],
+    // Time slots for the contest date
+    timeSlots: [{
+      startTime: { type: Date, required: true },
+      endTime: { type: Date, required: true },
+      isSelected: { type: Boolean, default: false }
     }],
     // Statistics
     stats: {
@@ -80,6 +113,16 @@ contestSchema.statics.generateContestId = function() {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let id = 'c-';
   for (let i = 0; i < 6; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return id;
+};
+
+// Method to generate unique question ID (format: q-abc123)
+contestSchema.statics.generateQuestionId = function() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let id = 'q-';
+  for (let i = 0; i < 8; i++) {
     id += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return id;

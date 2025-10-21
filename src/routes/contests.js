@@ -23,18 +23,47 @@ router.post('/create', authenticateToken, async (req, res) => {
   try {
     if (!checkDB(res)) return;
 
-    const { title, description, startTime, endTime, visibility, problems, allowedLanguages, maxParticipants } = req.body;
+    const { 
+      title, 
+      description, 
+      startTime, 
+      endTime, 
+      password,
+      visibility, 
+      questions, 
+      timeSlots,
+      allowedLanguages, 
+      maxParticipants 
+    } = req.body;
 
-    if (!title || !description || !startTime || !endTime) {
-      return res.status(400).json({ message: 'Title, description, start time, and end time are required' });
+    if (!title || !description || !password) {
+      return res.status(400).json({ message: 'Title, description, and password are required' });
     }
 
-    if (new Date(startTime) >= new Date(endTime)) {
-      return res.status(400).json({ message: 'End time must be after start time' });
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters long' });
     }
 
-    if (!problems || problems.length === 0) {
-      return res.status(400).json({ message: 'At least one problem is required' });
+    if (!questions || questions.length === 0) {
+      return res.status(400).json({ message: 'At least one question is required' });
+    }
+
+    // Validate time slots if provided
+    if (timeSlots && timeSlots.length > 0) {
+      const selectedSlot = timeSlots.find(slot => slot.isSelected);
+      if (!selectedSlot) {
+        return res.status(400).json({ message: 'Please select a time slot for the contest' });
+      }
+      
+      if (new Date(selectedSlot.startTime) >= new Date(selectedSlot.endTime)) {
+        return res.status(400).json({ message: 'End time must be after start time' });
+      }
+    } else if (startTime && endTime) {
+      if (new Date(startTime) >= new Date(endTime)) {
+        return res.status(400).json({ message: 'End time must be after start time' });
+      }
+    } else {
+      return res.status(400).json({ message: 'Contest time must be specified either through time slots or start/end time' });
     }
 
     // Generate unique contest ID and shareable link
@@ -55,28 +84,37 @@ router.post('/create', authenticateToken, async (req, res) => {
 
     const shareableLink = `/contest/${contestId}`;
 
-    // Validate problems exist
-    for (const prob of problems) {
-      const problem = await Problem.findOne({ id: prob.problemId });
-      if (!problem) {
-        return res.status(404).json({ message: `Problem ${prob.problemId} not found` });
-      }
+    // Process questions and generate unique IDs
+    const processedQuestions = questions.map((question, index) => ({
+      ...question,
+      questionId: Contest.generateQuestionId(),
+      order: index + 1,
+      points: question.points || 100
+    }));
+
+    // Determine contest start and end times
+    let contestStartTime, contestEndTime;
+    if (timeSlots && timeSlots.length > 0) {
+      const selectedSlot = timeSlots.find(slot => slot.isSelected);
+      contestStartTime = new Date(selectedSlot.startTime);
+      contestEndTime = new Date(selectedSlot.endTime);
+    } else {
+      contestStartTime = new Date(startTime);
+      contestEndTime = new Date(endTime);
     }
 
     const contest = await Contest.create({
       contestId,
       title,
       description,
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
+      startTime: contestStartTime,
+      endTime: contestEndTime,
+      password,
       visibility: visibility || 'public',
       shareableLink,
       creatorId: req.user.sub,
-      problems: problems.map((p, index) => ({
-        problemId: p.problemId,
-        points: p.points || 10,
-        order: index + 1
-      })),
+      questions: processedQuestions,
+      timeSlots: timeSlots || [],
       allowedLanguages: allowedLanguages || ['javascript', 'python', 'cpp', 'java'],
       maxParticipants,
       status: 'scheduled'
@@ -88,7 +126,9 @@ router.post('/create', authenticateToken, async (req, res) => {
       shareableLink: contest.shareableLink,
       startTime: contest.startTime,
       endTime: contest.endTime,
-      visibility: contest.visibility
+      visibility: contest.visibility,
+      questionsCount: contest.questions.length,
+      message: 'Contest created successfully'
     });
   } catch (err) {
     console.error('Create contest error:', err);
@@ -136,6 +176,44 @@ router.get('/list', async (req, res) => {
   }
 });
 
+// GET CONTEST SHARING INFO
+router.get('/:contestId/share', async (req, res) => {
+  try {
+    if (!checkDB(res)) return;
+
+    const { contestId } = req.params;
+
+    const contest = await Contest.findOne({ contestId })
+      .populate('creatorId', 'username fullName');
+
+    if (!contest) {
+      return res.status(404).json({ message: 'Contest not found' });
+    }
+
+    // Return sharing information
+    return res.json({
+      contestId: contest.contestId,
+      title: contest.title,
+      description: contest.description,
+      startTime: contest.startTime,
+      endTime: contest.endTime,
+      creator: contest.creatorId?.username || 'Unknown',
+      questionsCount: contest.questions.length,
+      maxParticipants: contest.maxParticipants,
+      shareableLink: `${req.protocol}://${req.get('host')}/join-contest?id=${contest.contestId}`,
+      joinInstructions: {
+        step1: `Contest ID: ${contest.contestId}`,
+        step2: 'Use the contest password provided by the organizer',
+        step3: 'Go to /join-contest and enter the credentials'
+      },
+      state: contest.getState()
+    });
+  } catch (err) {
+    console.error('Get contest sharing info error:', err);
+    return res.status(500).json({ message: 'Failed to fetch contest info', error: err.message });
+  }
+});
+
 // GET CONTEST BY ID
 router.get('/:contestId', async (req, res) => {
   try {
@@ -172,6 +250,84 @@ router.get('/:contestId', async (req, res) => {
   } catch (err) {
     console.error('Get contest error:', err);
     return res.status(500).json({ message: 'Failed to fetch contest', error: err.message });
+  }
+});
+
+// JOIN CONTEST WITH PASSWORD
+router.post('/join', authenticateToken, async (req, res) => {
+  try {
+    if (!checkDB(res)) return;
+
+    const { contestId, password } = req.body;
+    const userId = req.user.sub;
+
+    if (!contestId || !password) {
+      return res.status(400).json({ message: 'Contest ID and password are required' });
+    }
+
+    const contest = await Contest.findOne({ contestId });
+
+    if (!contest) {
+      return res.status(404).json({ message: 'Contest not found' });
+    }
+
+    // Verify password
+    if (contest.password !== password) {
+      return res.status(401).json({ message: 'Invalid password' });
+    }
+
+    // Check if contest has ended
+    if (contest.hasEnded()) {
+      return res.status(400).json({ message: 'Contest has already ended' });
+    }
+
+    // Check if already registered
+    const existing = await ContestRegistration.findOne({ contestId, userId });
+    if (existing) {
+      return res.status(200).json({ 
+        message: 'Already joined this contest',
+        contestInfo: {
+          title: contest.title,
+          description: contest.description,
+          startTime: contest.startTime,
+          endTime: contest.endTime,
+          questionsCount: contest.questions.length
+        }
+      });
+    }
+
+    // Check max participants
+    if (contest.maxParticipants && contest.stats.totalParticipants >= contest.maxParticipants) {
+      return res.status(400).json({ message: 'Contest is full' });
+    }
+
+    const registration = await ContestRegistration.create({
+      contestId,
+      userId,
+      registrationTime: new Date()
+    });
+
+    // Update contest stats
+    contest.stats.totalParticipants += 1;
+    await contest.save();
+
+    return res.status(201).json({
+      message: 'Successfully joined contest',
+      contestInfo: {
+        title: contest.title,
+        description: contest.description,
+        startTime: contest.startTime,
+        endTime: contest.endTime,
+        questionsCount: contest.questions.length
+      },
+      registration: {
+        contestId: registration.contestId,
+        registrationTime: registration.registrationTime
+      }
+    });
+  } catch (err) {
+    console.error('Join contest error:', err);
+    return res.status(500).json({ message: 'Failed to join contest', error: err.message });
   }
 });
 
@@ -290,11 +446,11 @@ router.post('/:contestId/submit', authenticateToken, async (req, res) => {
     if (!checkDB(res)) return;
 
     const { contestId } = req.params;
-    const { problemId, code, language } = req.body;
+    const { questionId, code, language } = req.body;
     const userId = req.user.sub;
 
-    if (!problemId || !code || !language) {
-      return res.status(400).json({ message: 'Problem ID, code, and language are required' });
+    if (!questionId || !code || !language) {
+      return res.status(400).json({ message: 'Question ID, code, and language are required' });
     }
 
     const contest = await Contest.findOne({ contestId });
@@ -314,23 +470,17 @@ router.post('/:contestId/submit', authenticateToken, async (req, res) => {
       return res.status(403).json({ message: 'You must register for the contest first' });
     }
 
-    // Check if problem is part of contest
-    const contestProblem = contest.problems.find(p => p.problemId === problemId);
-    if (!contestProblem) {
-      return res.status(404).json({ message: 'Problem not found in this contest' });
+    // Check if question is part of contest
+    const contestQuestion = contest.questions.find(q => q.questionId === questionId);
+    if (!contestQuestion) {
+      return res.status(404).json({ message: 'Question not found in this contest' });
     }
 
     // Check if already solved
-    const alreadySolved = registration.problemsSolved.some(p => p.problemId === problemId);
+    const alreadySolved = registration.problemsSolved.some(p => p.problemId === questionId);
 
-    // Get problem details and test cases
-    const problem = await Problem.findOne({ id: problemId });
-    if (!problem) {
-      return res.status(404).json({ message: 'Problem not found' });
-    }
-
-    // Execute code (using mock execution for now)
-    const testResults = await executeCode(code, language, problem.testCases || []);
+    // Execute code using the contest question's test cases
+    const testResults = await executeCode(code, language, contestQuestion.hiddenTestCases || []);
     const allPassed = testResults.every(result => result.passed);
     const status = allPassed ? 'accepted' : 'wrong_answer';
 
@@ -340,24 +490,24 @@ router.post('/:contestId/submit', authenticateToken, async (req, res) => {
     // Create submission
     const submission = await ContestSubmission.create({
       contestId,
-      problemId,
+      problemId: questionId, // Using questionId in place of problemId for consistency
       userId,
       code,
       language,
       status,
       testResults,
-      points: allPassed && !alreadySolved ? contestProblem.points : 0,
+      points: allPassed && !alreadySolved ? contestQuestion.points : 0,
       timestamp: new Date(),
       timeTaken
     });
 
     // Update registration if accepted and not already solved
     if (allPassed && !alreadySolved) {
-      registration.score += contestProblem.points;
+      registration.score += contestQuestion.points;
       registration.problemsSolved.push({
-        problemId,
+        problemId: questionId, // Storing questionId as problemId for compatibility
         solvedAt: new Date(),
-        points: contestProblem.points
+        points: contestQuestion.points
       });
       registration.lastSubmissionTime = new Date();
       registration.submissionsCount += 1;
@@ -431,6 +581,57 @@ router.get('/:contestId/my-submissions', authenticateToken, async (req, res) => 
   }
 });
 
+// GET CONTEST QUESTIONS FOR PARTICIPANTS
+router.get('/:contestId/questions', authenticateToken, async (req, res) => {
+  try {
+    if (!checkDB(res)) return;
+
+    const { contestId } = req.params;
+    const userId = req.user.sub;
+
+    const contest = await Contest.findOne({ contestId });
+
+    if (!contest) {
+      return res.status(404).json({ message: 'Contest not found' });
+    }
+
+    // Check if user is registered
+    const registration = await ContestRegistration.findOne({ contestId, userId });
+    if (!registration) {
+      return res.status(403).json({ message: 'You must join the contest first' });
+    }
+
+    // Return questions without hidden test cases
+    const questionsForParticipant = contest.questions.map(q => ({
+      questionId: q.questionId,
+      title: q.title,
+      description: q.description,
+      difficulty: q.difficulty,
+      constraints: q.constraints,
+      sampleTestCases: q.sampleTestCases,
+      timeLimit: q.timeLimit,
+      memoryLimit: q.memoryLimit,
+      points: q.points,
+      order: q.order,
+      tags: q.tags
+    })).sort((a, b) => a.order - b.order);
+
+    return res.json({
+      questions: questionsForParticipant,
+      contestInfo: {
+        title: contest.title,
+        startTime: contest.startTime,
+        endTime: contest.endTime,
+        allowedLanguages: contest.allowedLanguages,
+        state: contest.getState()
+      }
+    });
+  } catch (err) {
+    console.error('Get contest questions error:', err);
+    return res.status(500).json({ message: 'Failed to fetch questions', error: err.message });
+  }
+});
+
 // GET CONTEST PROBLEM DETAILS
 router.get('/:contestId/problems/:problemId', async (req, res) => {
   try {
@@ -481,8 +682,8 @@ async function executeCode(code, language, testCases) {
   return testCases.map((testCase, index) => ({
     testCaseIndex: index,
     input: testCase.input,
-    expectedOutput: testCase.expectedOutput,
-    actualOutput: testCase.expectedOutput,
+    expectedOutput: testCase.output, // Using 'output' field from contest question format
+    actualOutput: testCase.output, // Mock: same as expected for now
     passed: true,
     executionTime: Math.random() * 100
   }));
