@@ -36,6 +36,15 @@ router.post('/create', authenticateToken, async (req, res) => {
       maxParticipants 
     } = req.body;
 
+    // Debug logging
+    console.log('Contest creation request body:', {
+      title: title || 'MISSING',
+      description: description || 'MISSING',
+      password: password ? 'PROVIDED' : 'MISSING',
+      timeSlots: timeSlots ? `${timeSlots.length} slots, selected: ${timeSlots.filter(s => s.isSelected).length}` : 'MISSING',
+      questions: questions ? `${questions.length} questions` : 'MISSING'
+    });
+
     if (!title || !description || !password) {
       return res.status(400).json({ message: 'Title, description, and password are required' });
     }
@@ -49,21 +58,39 @@ router.post('/create', authenticateToken, async (req, res) => {
     }
 
     // Validate time slots if provided
+    let hasValidTimeSlots = false;
+    let selectedSlot = null;
+    
     if (timeSlots && timeSlots.length > 0) {
-      const selectedSlot = timeSlots.find(slot => slot.isSelected);
-      if (!selectedSlot) {
-        return res.status(400).json({ message: 'Please select a time slot for the contest' });
+      selectedSlot = timeSlots.find(slot => slot.isSelected);
+      if (selectedSlot) {
+        if (new Date(selectedSlot.startTime) >= new Date(selectedSlot.endTime)) {
+          return res.status(400).json({ message: 'End time must be after start time' });
+        }
+        hasValidTimeSlots = true;
       }
-      
-      if (new Date(selectedSlot.startTime) >= new Date(selectedSlot.endTime)) {
-        return res.status(400).json({ message: 'End time must be after start time' });
-      }
-    } else if (startTime && endTime) {
+    }
+    
+    // Check if we have either valid time slots or direct start/end times
+    if (!hasValidTimeSlots && (!startTime || !endTime)) {
+      console.log('Time validation failed:', { hasValidTimeSlots, startTime, endTime, selectedSlot });
+      return res.status(400).json({ 
+        message: 'Please select a time slot or provide start/end times for the contest',
+        details: {
+          hasValidTimeSlots,
+          startTime: startTime || null,
+          endTime: endTime || null,
+          timeSlotsCount: timeSlots ? timeSlots.length : 0,
+          selectedSlotsCount: timeSlots ? timeSlots.filter(s => s.isSelected).length : 0
+        }
+      });
+    }
+    
+    // Validate direct start/end times if no time slots
+    if (!hasValidTimeSlots && startTime && endTime) {
       if (new Date(startTime) >= new Date(endTime)) {
         return res.status(400).json({ message: 'End time must be after start time' });
       }
-    } else {
-      return res.status(400).json({ message: 'Contest time must be specified either through time slots or start/end time' });
     }
 
     // Generate unique contest ID and shareable link
@@ -94,8 +121,7 @@ router.post('/create', authenticateToken, async (req, res) => {
 
     // Determine contest start and end times
     let contestStartTime, contestEndTime;
-    if (timeSlots && timeSlots.length > 0) {
-      const selectedSlot = timeSlots.find(slot => slot.isSelected);
+    if (hasValidTimeSlots && selectedSlot) {
       contestStartTime = new Date(selectedSlot.startTime);
       contestEndTime = new Date(selectedSlot.endTime);
     } else {
