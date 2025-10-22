@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -37,6 +37,9 @@ let currentState = {
   language: "javascript"
 };
 
+// Store active processes for each socket
+const activeProcesses = new Map();
+
 // Language configurations
 const languageConfigs = {
   javascript: { extension: '.js', command: 'node' },
@@ -63,24 +66,57 @@ async function deleteTempFile(filePath) {
   }
 }
 
-// Function to execute code based on language
-async function executeCode(code, language) {
+// Function to execute code interactively using streams
+async function executeCodeInteractive(code, language, socket) {
   let filePath;
+  let child;
+  
   try {
     switch (language) {
       case 'python':
         filePath = await createTempFile(code, '.py');
-        return new Promise((resolve) => {
-          exec(`python ${filePath}`, { timeout: 10000 }, (error, stdout, stderr) => {
-            deleteTempFile(filePath);
-            if (error) {
-              resolve({ success: false, output: stderr || error.message });
-            } else {
-              resolve({ success: true, output: stdout || 'Code executed successfully!' });
-            }
+        child = spawn('python', ['-u', filePath]); // -u for unbuffered output
+        
+        // Store process so we can send input to it later
+        activeProcesses.set(socket.id, { child, filePath });
+        
+        // Stream stdout to client in real-time
+        child.stdout.on('data', (data) => {
+          socket.emit('code-output', { data: data.toString(), stream: 'stdout' });
+        });
+        
+        // Stream stderr to client
+        child.stderr.on('data', (data) => {
+          socket.emit('code-output', { data: data.toString(), stream: 'stderr' });
+        });
+        
+        // Handle process completion
+        child.on('close', (code) => {
+          deleteTempFile(filePath);
+          activeProcesses.delete(socket.id);
+          socket.emit('code-finished', { 
+            exitCode: code,
+            success: code === 0 
           });
         });
+        
+        // Handle errors
+        child.on('error', (error) => {
+          deleteTempFile(filePath);
+          activeProcesses.delete(socket.id);
+          socket.emit('code-finished', { 
+            success: false, 
+            error: error.message 
+          });
+        });
+        
+        return { started: true };
 
+      case 'javascript':
+        // For JavaScript, still use synchronous execution
+        return await executeCodeSync(code, language);
+
+      case 'c':
       case 'cpp':
         filePath = await createTempFile(code, '.cpp');
         const executablePath = path.join(__dirname, `temp_program_${Date.now()}`);
@@ -97,11 +133,32 @@ async function executeCode(code, language) {
         });
 
       case 'java':
+        // Java requires the filename to match the public class name
+        // Save as Main.java to avoid compilation errors
         const className = 'Main';
-        filePath = await createTempFile(code, '.java');
+        const javaDir = path.join(__dirname, 'temp');
+        
+        // Create temp directory if it doesn't exist
+        try {
+          await fs.mkdir(javaDir, { recursive: true });
+        } catch (err) {
+          // Directory might already exist
+        }
+        
+        filePath = path.join(javaDir, 'Main.java');
+        await fs.writeFile(filePath, code);
+        
         return new Promise((resolve) => {
-          exec(`javac ${filePath} && java -cp ${path.dirname(filePath)} ${className}`, { timeout: 10000 }, (error, stdout, stderr) => {
-            deleteTempFile(filePath);
+          // Compile and run Java code
+          exec(`javac "${filePath}" && java -cp "${javaDir}" ${className}`, { timeout: 10000 }, async (error, stdout, stderr) => {
+            // Clean up both .java and .class files
+            try {
+              await fs.unlink(filePath);
+              await fs.unlink(path.join(javaDir, 'Main.class'));
+            } catch (cleanupError) {
+              // Ignore cleanup errors
+            }
+            
             if (error) {
               resolve({ success: false, output: stderr || error.message });
             } else {
@@ -125,18 +182,53 @@ async function executeCode(code, language) {
           });
         });
 
-      case 'javascript':
       default:
+        return await executeCodeSync(code, language);
+    }
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// Synchronous execution for languages that don't support interactive input
+async function executeCodeSync(code, language) {
+  let filePath;
+  try {
+    switch (language) {
+      case 'javascript':
         return new Promise((resolve) => {
           try {
-            // Create a safe execution environment
-            const safeEval = new Function(code);
-            const result = safeEval();
-            resolve({ success: true, output: result !== undefined ? String(result) : 'Code executed successfully!' });
+            let consoleOutput = [];
+            const originalLog = console.log;
+            
+            console.log = (...args) => {
+              consoleOutput.push(args.map(arg => String(arg)).join(' '));
+              originalLog(...args);
+            };
+            
+            try {
+              const safeEval = new Function(code);
+              const result = safeEval();
+              console.log = originalLog;
+              
+              if (consoleOutput.length > 0) {
+                resolve({ success: true, output: consoleOutput.join('\n') });
+              } else if (result !== undefined) {
+                resolve({ success: true, output: String(result) });
+              } else {
+                resolve({ success: true, output: 'Code executed successfully!' });
+              }
+            } catch (execError) {
+              console.log = originalLog;
+              throw execError;
+            }
           } catch (error) {
             resolve({ success: false, output: error.message });
           }
         });
+        
+      default:
+        return { success: false, output: 'Language not supported for sync execution' };
     }
   } catch (error) {
     return { success: false, output: error.message };
@@ -170,9 +262,40 @@ io.on('connection', (socket) => {
   // Handle code execution
   socket.on('run-code', async (data) => {
     console.log(`Executing ${data.language} code...`);
-    const result = await executeCode(data.code, data.language);
-    if (data.roomId) io.to(data.roomId).emit('run-result', result);
-    else io.emit('run-result', result);
+    
+    // Stop any previous process
+    const prevProcess = activeProcesses.get(socket.id);
+    if (prevProcess) {
+      prevProcess.child.kill();
+      await deleteTempFile(prevProcess.filePath);
+      activeProcesses.delete(socket.id);
+    }
+    
+    const result = await executeCodeInteractive(data.code, data.language, socket);
+    
+    // For non-interactive languages, send result directly
+    if (result.output !== undefined) {
+      socket.emit('run-result', result);
+    }
+  });
+  
+  // Handle user input during execution
+  socket.on('send-input', (data) => {
+    const process = activeProcesses.get(socket.id);
+    if (process && process.child && process.child.stdin) {
+      process.child.stdin.write(data.input + '\n');
+    }
+  });
+  
+  // Handle stopping execution
+  socket.on('stop-execution', () => {
+    const process = activeProcesses.get(socket.id);
+    if (process) {
+      process.child.kill();
+      deleteTempFile(process.filePath);
+      activeProcesses.delete(socket.id);
+      socket.emit('code-finished', { success: false, stopped: true });
+    }
   });
 
   // Chat messaging within a room
@@ -190,6 +313,14 @@ io.on('connection', (socket) => {
   // Handle disconnect
   socket.on('disconnect', () => {
     console.log('A user disconnected from code editor');
+    
+    // Clean up any running process
+    const process = activeProcesses.get(socket.id);
+    if (process) {
+      process.child.kill();
+      deleteTempFile(process.filePath);
+      activeProcesses.delete(socket.id);
+    }
   });
 });
 

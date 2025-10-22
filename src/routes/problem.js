@@ -231,7 +231,20 @@ router.post('/run', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'Language not supported for this problem' });
     }
 
-    // Mock execution results with proper test case evaluation
+    // Preprocess function to normalize output strings
+    const preprocessOutput = (output) => {
+      if (!output) return '';
+      return output
+        .trim()                           // Remove leading/trailing whitespace
+        .replace(/\r\n/g, '\n')          // Normalize line endings (Windows -> Unix)
+        .replace(/\r/g, '\n')            // Normalize line endings (Mac -> Unix)
+        .replace(/\n+$/g, '')            // Remove trailing newlines
+        .replace(/\s+$/gm, '')           // Remove trailing spaces from each line
+        .replace(/^\s+/gm, '')           // Remove leading spaces from each line
+        .replace(/\s+/g, ' ');           // Normalize multiple spaces to single space
+    };
+
+    // Mock execution results - properly evaluate Python code
     const executeTestCase = (testCase) => {
       try {
         // Check for empty or minimal code first
@@ -239,181 +252,192 @@ router.post('/run', authenticateToken, async (req, res) => {
         if (codeLines.length === 0 || code.trim().length < 10) {
           return {
             input: testCase.input,
-            expectedOutput: testCase.output,
+            expectedOutput: testCase.expectedOutput || testCase.output,
             actualOutput: 'No meaningful code provided',
             passed: false
           };
         }
         
-        // For demonstration, we'll implement basic pattern matching for common problems
-        const input = testCase.input.trim();
-        const expectedOutput = testCase.output.trim();
+        // Get input and expected output with correct field names
+        const input = testCase.input || '';
+        const expectedOutput = testCase.expectedOutput || testCase.output || '';
         
         console.log(`\n=== Test Case Debug ===`);
         console.log(`Input: "${input}"`);
         console.log(`Expected Output: "${expectedOutput}"`);
         console.log(`Language: ${language}`);
-        console.log(`Code: ${code.substring(0, 100)}...`);
+        console.log(`Code: ${code.substring(0, 150)}...`);
         
-        // Try to execute the user's code logic for simple cases
+        // Simulate what the code would actually output
         let actualOutput = '';
-        let passed = false;
         
-        // Check for Hello World problem (both direct print and input echo)
-        if (expectedOutput === 'Hello World') {
-          if (language.toLowerCase() === 'python') {
-            // Check for direct print: print("Hello World")
-            const directPrintMatch = code.match(/print\s*\(\s*["']Hello World["']\s*\)/);
-            // Check for input echo: print(input())
-            const inputEchoMatch = code.match(/print\s*\(\s*input\s*\(\s*\)\s*\)/);
-            
-            if (directPrintMatch || inputEchoMatch) {
-              actualOutput = 'Hello World';
-              passed = true;
-            }
-          } else if (language.toLowerCase() === 'javascript') {
-            const consoleMatch = code.match(/console\.log\s*\(\s*["']Hello World["']\s*\)/);
-            if (consoleMatch) {
-              actualOutput = 'Hello World';
-              passed = true;
-            }
-          } else if (language.toLowerCase() === 'java') {
-            const printMatch = code.match(/System\.out\.println?\s*\(\s*["']Hello World["']\s*\)/);
-            if (printMatch) {
-              actualOutput = 'Hello World';
-              passed = true;
-            }
-          } else if (language.toLowerCase() === 'c++' || language.toLowerCase() === 'cpp') {
-            const coutMatch = code.match(/cout\s*<<\s*["']Hello World["']/);
-            if (coutMatch) {
-              actualOutput = 'Hello World';
-              passed = true;
-            }
-          } else if (language.toLowerCase() === 'c') {
-            const printfMatch = code.match(/printf\s*\(\s*["']Hello World["']\s*\)/);
-            if (printfMatch) {
-              actualOutput = 'Hello World';
-              passed = true;
-            }
-          }
-        }
-        // Pattern for simple input echo problems (when input matches expected output)
-        else if (input === expectedOutput) {
-          // Check if code properly reads and outputs the input
-          if (language.toLowerCase() === 'python') {
-            // Look for print(input()) or similar patterns
-            const inputEchoPattern = /print\s*\(\s*input\s*\(\s*\)\s*\)/;
-            if (inputEchoPattern.test(code)) {
-              actualOutput = expectedOutput;
-              passed = true;
-            }
-          } else if (language.toLowerCase() === 'javascript') {
-            // This is trickier for JavaScript as there's no standard input in browser
-            // For now, just check for console.log with the expected output
-            if (code.includes(expectedOutput)) {
-              actualOutput = expectedOutput;
-              passed = true;
-            }
-          }
-          // Add more language-specific input/output patterns as needed
-        }
-        // Algorithmic problems with numeric outputs
-        else if (!isNaN(parseFloat(expectedOutput))) {
-          // For algorithmic/mathematical problems
-          const expectedNum = parseFloat(expectedOutput);
+        if (language.toLowerCase() === 'python') {
+          // Python execution simulation - parse print statements more carefully
+          const printRegex = /print\s*\(\s*([^)]*)\s*\)/g;
+          let match;
           
-          if (language.toLowerCase() === 'python') {
-            // ONLY pass if code directly prints the exact expected number
-            const directPrintMatch = code.includes(`print(${expectedNum})`);
-            const directReturnMatch = code.includes(`return ${expectedNum}`);
+          while ((match = printRegex.exec(code)) !== null) {
+            let printContent = match[1].trim();
             
-            if (directPrintMatch || directReturnMatch) {
-              actualOutput = expectedOutput;
-              passed = true;
-            } else {
-              actualOutput = `Expected ${expectedOutput} but code doesn't print this exact value`;
-              passed = false;
-            }
-          } else if (language.toLowerCase() === 'javascript') {
-            const directConsoleMatch = code.includes(`console.log(${expectedNum})`);
-            const directReturnMatch = code.includes(`return ${expectedNum}`);
+            console.log(`Found print statement: ${printContent}`);
             
-            if (directConsoleMatch || directReturnMatch) {
-              actualOutput = expectedOutput;
-              passed = true;
-            } else {
-              actualOutput = `Expected ${expectedOutput} but code doesn't print this exact value`;
-              passed = false;
-            }
-          } else {
-            // For other languages, only pass if exact number appears in print/output statement
-            if (code.includes(expectedNum.toString())) {
-              actualOutput = expectedOutput;
-              passed = true;
-            } else {
-              actualOutput = `Expected ${expectedOutput} but code doesn't print this exact value`;
-              passed = false;
+            // Handle different print patterns
+            try {
+              // Replace input() with the actual test input value
+              if (printContent.includes('input()')) {
+                // Evaluate the expression with input() replaced
+                let evaluatedContent = printContent;
+                
+                // Handle string concatenation: input() + "something"
+                if (printContent.match(/input\s*\(\s*\)\s*\+/)) {
+                  // Extract parts around the + operator
+                  const parts = printContent.split('+').map(p => p.trim());
+                  let result = '';
+                  for (const part of parts) {
+                    if (part.includes('input()')) {
+                      result += input;
+                    } else {
+                      // Remove quotes from string literals
+                      result += part.replace(/^["']|["']$/g, '');
+                    }
+                  }
+                  actualOutput += result;
+                } else if (printContent === 'input()') {
+                  // Just print(input())
+                  actualOutput += input;
+                } else {
+                  // input() with other operations - try basic evaluation
+                  actualOutput += input;
+                }
+              }
+              // Handle direct string literals: print("Hello World")
+              else if (printContent.match(/^["'][^"']*["']$/)) {
+                actualOutput += printContent.replace(/^["']|["']$/g, '');
+              }
+              // Handle f-strings: print(f"text")
+              else if (printContent.match(/^f["'][^"']*["']$/)) {
+                actualOutput += printContent.replace(/^f["']|["']$/g, '');
+              }
+              // Handle string concatenation: "Hello" + " " + "World"
+              else if (printContent.includes('+')) {
+                const parts = printContent.split('+').map(p => p.trim());
+                for (const part of parts) {
+                  actualOutput += part.replace(/^["']|["']$/g, '');
+                }
+              }
+              // Handle variables or expressions - can't evaluate, show as-is
+              else {
+                actualOutput += `[Cannot evaluate: ${printContent}]`;
+              }
+            } catch (e) {
+              console.error('Error evaluating print:', e);
+              actualOutput += `[Error: ${printContent}]`;
             }
           }
+          
+          // If no print found but code has print keyword
+          if (actualOutput === '' && code.includes('print')) {
+            actualOutput = '[Syntax error in print statement]';
+          }
+          // If no print at all
+          if (actualOutput === '' && !code.includes('print')) {
+            actualOutput = '[No print statement found]';
+          }
+        } 
+        else if (language.toLowerCase() === 'javascript') {
+          // JavaScript execution simulation
+          const consoleRegex = /console\.log\s*\(\s*([^)]*)\s*\)/g;
+          let match;
+          
+          while ((match = consoleRegex.exec(code)) !== null) {
+            let logContent = match[1].trim();
+            
+            // Handle string literals
+            if (logContent.match(/^["'`][^"'`]*["'`]$/)) {
+              actualOutput += logContent.replace(/^["'`]|["'`]$/g, '');
+            }
+            // Handle concatenation
+            else if (logContent.includes('+')) {
+              const parts = logContent.split('+').map(p => p.trim());
+              for (const part of parts) {
+                actualOutput += part.replace(/^["'`]|["'`]$/g, '');
+              }
+            }
+            else {
+              actualOutput += logContent;
+            }
+          }
+          
+          if (actualOutput === '' && code.includes('console.log')) {
+            actualOutput = '[Syntax error in console.log]';
+          }
+          if (actualOutput === '' && !code.includes('console.log')) {
+            actualOutput = '[No console.log found]';
+          }
         }
-        // Generic validation for other algorithmic problems
+        else if (language.toLowerCase() === 'java') {
+          // Java execution simulation
+          const printRegex = /System\.out\.println?\s*\(\s*([^)]*)\s*\)/g;
+          let match;
+          
+          while ((match = printRegex.exec(code)) !== null) {
+            let printContent = match[1].trim();
+            actualOutput += printContent.replace(/^["]|["]$/g, '');
+          }
+          
+          if (actualOutput === '') {
+            actualOutput = '[No System.out.print found]';
+          }
+        }
+        else if (language.toLowerCase() === 'c++' || language.toLowerCase() === 'cpp') {
+          // C++ execution simulation
+          const coutRegex = /cout\s*<<\s*([^;]*);/g;
+          let match;
+          
+          while ((match = coutRegex.exec(code)) !== null) {
+            let coutContent = match[1].trim();
+            // Split by << operator
+            const parts = coutContent.split('<<').map(p => p.trim());
+            for (const part of parts) {
+              if (part !== 'cout') {
+                actualOutput += part.replace(/^["]|["]$/g, '').replace(/endl/g, '\n');
+              }
+            }
+          }
+          
+          if (actualOutput === '') {
+            actualOutput = '[No cout statement found]';
+          }
+        }
         else {
-          // For complex algorithmic problems, use more flexible validation
-          if (language.toLowerCase() === 'python') {
-            // Check if code has meaningful structure for algorithmic problems
-            const hasFunction = /def\s+\w+/.test(code);
-            const hasLoop = /(for\s+|while\s+)/.test(code);
-            const hasPrint = /print\s*\(/.test(code);
-            const hasReturn = /return\s+/.test(code);
-            const hasLogic = /(if\s+|elif\s+|else\s*:)/.test(code);
-            
-            // If code has algorithmic structure, give it a chance
-            if ((hasFunction || hasLoop || hasLogic) && (hasPrint || hasReturn)) {
-              // For demo purposes, assume it might be correct
-              actualOutput = expectedOutput;
-              passed = true;
-            } else {
-              actualOutput = 'Code lacks algorithmic structure or output statement';
-              passed = false;
-            }
-          } else if (language.toLowerCase() === 'javascript') {
-            const hasFunction = /function\s+\w+/.test(code);
-            const hasLoop = /(for\s*\(|while\s*\()/.test(code);
-            const hasConsole = /console\.log\s*\(/.test(code);
-            const hasReturn = /return\s+/.test(code);
-            const hasLogic = /(if\s*\(|else\s*\{)/.test(code);
-            
-            if ((hasFunction || hasLoop || hasLogic) && (hasConsole || hasReturn)) {
-              actualOutput = expectedOutput;
-              passed = true;
-            } else {
-              actualOutput = 'Code lacks algorithmic structure or output statement';
-              passed = false;
-            }
-          } else {
-            // For other languages, default to failure
-            actualOutput = 'Code does not produce expected output';
-            passed = false;
-          }
+          actualOutput = `[${language} execution not fully supported yet]`;
         }
         
-        if (!passed) {
-          actualOutput = actualOutput || 'No output produced';
-        }
+        console.log(`Simulated Output: "${actualOutput}"`);
         
-        console.log(`Test Result - Passed: ${passed}, Actual Output: "${actualOutput}"`);
+        // Compare outputs using preprocessing
+        const processedActualOutput = preprocessOutput(actualOutput);
+        const processedExpectedOutput = preprocessOutput(expectedOutput);
+        
+        const passed = processedActualOutput === processedExpectedOutput;
+        
+        console.log(`Test Result - Passed: ${passed}`);
+        console.log(`Expected (preprocessed): "${processedExpectedOutput}"`);
+        console.log(`Actual (preprocessed): "${processedActualOutput}"`);
+        console.log(`Match: ${processedActualOutput === processedExpectedOutput}`);
         console.log(`======================\n`);
         
         return {
-          input: testCase.input,
-          expectedOutput: testCase.output,
-          actualOutput,
+          input: testCase.input || '',
+          expectedOutput: testCase.expectedOutput || testCase.output || '',
+          actualOutput: actualOutput || '[No output]',
           passed
         };
       } catch (error) {
+        console.error('Execution error:', error);
         return {
-          input: testCase.input,
-          expectedOutput: testCase.output,
+          input: testCase.input || '',
+          expectedOutput: testCase.expectedOutput || testCase.output || '',
           actualOutput: 'Runtime Error: ' + error.message,
           passed: false
         };

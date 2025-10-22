@@ -51,7 +51,7 @@ if (process.env.NODE_ENV === 'production') {
 // Routers
 const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
-const problemsRouter = require('./routes/problems');
+const problemsRouter = require('./routes/problem'); // File is named 'problem.js' not 'problems.js'
 const challengesRouter = require('./routes/challenges');
 const contestsRouter = require('./routes/contests');
 app.use('/api/auth', authRouter);
