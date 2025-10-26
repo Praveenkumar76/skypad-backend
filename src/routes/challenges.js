@@ -276,6 +276,15 @@ router.post('/rooms/:roomId/submit', authenticateToken, async (req, res) => {
 
     // Check if room is in progress
     if (room.status !== 'in_progress') {
+      // If room is finished, return the result
+      if (room.status === 'finished' && room.winnerId) {
+        return res.status(200).json({
+          result: 'finished',
+          isWinner: room.winnerId.toString() === req.user.sub,
+          matchFinished: true,
+          message: 'Match has already finished'
+        });
+      }
       return res.status(400).json({ message: 'Match is not in progress' });
     }
 
@@ -287,7 +296,12 @@ router.post('/rooms/:roomId/submit', authenticateToken, async (req, res) => {
 
     // Check if match is already finished (race condition prevention)
     if (room.winnerId) {
-      return res.status(400).json({ message: 'Match has already been won' });
+      return res.status(200).json({
+        result: 'finished',
+        isWinner: room.winnerId.toString() === userId,
+        matchFinished: true,
+        message: 'Match has already been won'
+      });
     }
 
     // Get problem and test cases - handle both _id and problemId
