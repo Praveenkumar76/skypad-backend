@@ -37,6 +37,10 @@ let currentState = {
   language: "javascript"
 };
 
+// Basic in-memory room registry (ephemeral)
+// We keep minimal info for broadcasting convenience; authoritative state can live on clients.
+const rooms = new Map(); // roomId -> { players: Map<socketId, player>, lastUpdate: number }
+
 // Store active processes for each socket
 const activeProcesses = new Map();
 
@@ -239,11 +243,69 @@ async function executeCodeSync(code, language) {
 io.on('connection', (socket) => {
   console.log('A user connected to code editor');
 
-  // Room joining for collaborative sessions
-  socket.on('join-room', (roomId) => {
+  // Room joining for collaborative sessions (challenge rooms, etc.)
+  socket.on('join-room', (payload) => {
+    const roomId = typeof payload === 'string' ? payload : payload?.roomId;
+    const player = typeof payload === 'object' ? payload?.player : null;
     if (!roomId) return;
+
     socket.join(roomId);
-    socket.to(roomId).emit('system', { type: 'join', id: socket.id });
+
+    // Maintain ephemeral room registry
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, { players: new Map(), lastUpdate: Date.now() });
+    }
+    const room = rooms.get(roomId);
+    if (player) {
+      room.players.set(socket.id, player);
+      room.lastUpdate = Date.now();
+      // Notify everyone in the room (including the joining user) about the new player
+      io.to(roomId).emit('player-joined', { roomId, player, socketId: socket.id, players: Array.from(room.players.values()) });
+    } else {
+      socket.to(roomId).emit('system', { type: 'join', id: socket.id });
+    }
+  });
+
+  // Relay room-scoped events for challenge room coordination
+  socket.on('room-state', ({ roomId, state }) => {
+    if (!roomId || !state) return;
+    io.to(roomId).emit('room-state', { roomId, state, ts: Date.now() });
+  });
+
+  socket.on('problem-selected', ({ roomId, problem }) => {
+    if (!roomId || !problem) return;
+    io.to(roomId).emit('problem-selected', { roomId, problem, ts: Date.now() });
+  });
+
+  socket.on('challenge-start', ({ roomId, startAt, duration, problem }) => {
+    if (!roomId || !startAt || !duration) return;
+    io.to(roomId).emit('challenge-start', { roomId, startAt, duration, problem: problem || null, ts: Date.now() });
+  });
+
+  socket.on('score-update', ({ roomId, playerId, score }) => {
+    if (!roomId || !playerId || !score) return;
+    io.to(roomId).emit('score-update', { roomId, playerId, score, ts: Date.now() });
+  });
+
+  socket.on('challenge-end', ({ roomId, winnerId, scores }) => {
+    if (!roomId || !winnerId) return;
+    io.to(roomId).emit('challenge-end', { roomId, winnerId, scores: scores || null, ts: Date.now() });
+  });
+
+  socket.on('timer-sync', ({ roomId, remaining }) => {
+    if (!roomId || typeof remaining !== 'number') return;
+    socket.to(roomId).emit('timer-sync', { roomId, remaining, ts: Date.now() });
+  });
+
+  socket.on('leave-room', ({ roomId }) => {
+    if (!roomId) return;
+    socket.leave(roomId);
+    const room = rooms.get(roomId);
+    if (room) {
+      room.players.delete(socket.id);
+      room.lastUpdate = Date.now();
+      io.to(roomId).emit('player-left', { roomId, socketId: socket.id, players: Array.from(room.players.values()) });
+    }
   });
 
   // Send current code state to newly connected users
@@ -313,6 +375,15 @@ io.on('connection', (socket) => {
   // Handle disconnect
   socket.on('disconnect', () => {
     console.log('A user disconnected from code editor');
+    
+    // Clean up any rooms the socket was part of
+    for (const [roomId, info] of rooms.entries()) {
+      if (info.players.has(socket.id)) {
+        info.players.delete(socket.id);
+        info.lastUpdate = Date.now();
+        io.to(roomId).emit('player-left', { roomId, socketId: socket.id, players: Array.from(info.players.values()) });
+      }
+    }
     
     // Clean up any running process
     const process = activeProcesses.get(socket.id);

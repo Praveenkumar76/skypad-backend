@@ -147,11 +147,100 @@ router.post('/solve-problem', authenticateToken, async (req, res) => {
       language: language || 'JavaScript'
     });
 
+    // Award rewards (100 XP and 10 coins per problem)
+    const xpReward = 100;
+    const coinReward = 10;
+    
+    // Initialize rewards if not exists
+    if (!user.rewards) {
+      user.rewards = {
+        coins: 0,
+        xp: 0,
+        level: 1,
+        badges: [],
+        ownedItems: [],
+        activeBoosters: [],
+        achievements: [],
+        weeklyChallenges: [],
+        monthlyChallenges: [],
+        transactionHistory: [],
+        dailyRewards: {
+          lastClaimed: null,
+          streak: 0,
+          nextReward: 1
+        },
+        profileCustomization: {
+          frameStyle: 'default',
+          theme: 'default',
+          avatar: null
+        }
+      };
+    }
+
+    // Apply active boosters
+    const now = new Date();
+    const activeBoosters = user.rewards.activeBoosters.filter(booster => 
+      new Date(booster.expiresAt) > now
+    );
+    
+    let finalXpReward = xpReward;
+    let finalCoinReward = coinReward;
+    
+    activeBoosters.forEach(booster => {
+      if (booster.type === 'xp') {
+        finalXpReward *= booster.multiplier;
+      } else if (booster.type === 'coins') {
+        finalCoinReward *= booster.multiplier;
+      }
+    });
+
+    // Award XP and coins
+    user.rewards.xp += finalXpReward;
+    user.rewards.coins += finalCoinReward;
+    
+    // Check for level up based on combined progress (XP + coins*5)
+    const totalProgressPoints = (Number(user.rewards.xp) || 0) + (Number(user.rewards.coins) || 0) * 5;
+    const newLevel = Math.floor(totalProgressPoints / 1000) + 1;
+    const leveledUp = newLevel > user.rewards.level;
+    if (leveledUp) {
+      user.rewards.level = newLevel;
+      user.rewards.coins += 100; // Level up bonus
+      user.rewards.transactionHistory.push({
+        type: 'reward',
+        amount: 100,
+        description: `Level up to ${newLevel}!`,
+        source: 'levelup'
+      });
+    }
+
+    // Add transaction history
+    user.rewards.transactionHistory.push({
+      type: 'earned',
+      amount: finalCoinReward,
+      description: `Solved problem: ${title}`,
+      source: 'problem'
+    });
+
+    // Check and award badges
+    await checkAndAwardBadges(user);
+    
+    // Check and update achievements
+    await checkAndUpdateAchievements(user);
+
     // Update statistics
     await updateUserStats(user);
     await user.save();
 
-    res.json({ message: 'Problem solved successfully', points });
+    res.json({ 
+      message: 'Problem solved successfully', 
+      points,
+      rewards: {
+        xp: finalXpReward,
+        coins: finalCoinReward,
+        leveledUp,
+        newLevel: user.rewards.level
+      }
+    });
   } catch (error) {
     console.error('Problem solve error:', error);
     res.status(500).json({ message: 'Failed to record problem solve' });
@@ -474,6 +563,188 @@ function getContestPoints(rank, isWon) {
   if (rank <= 50) return 60;
   if (rank <= 100) return 40;
   return 20;
+}
+
+// Badge definitions (same as in rewards.js)
+const BADGE_DEFINITIONS = {
+  'first-solve': {
+    name: 'First Solve',
+    description: 'Solve your first problem',
+    rarity: 'common',
+    category: 'milestone',
+    condition: (user) => user.solvedProblems.length >= 1
+  },
+  'algorithm-expert': {
+    name: 'Algorithm Expert',
+    description: 'Solved 10 algorithm challenges',
+    rarity: 'rare',
+    category: 'skill',
+    condition: (user) => user.solvedProblems.filter(p => p.topic === 'Dynamic Programming' || p.topic === 'Greedy').length >= 10
+  },
+  'frontend-wizard': {
+    name: 'Frontend Wizard',
+    description: 'Completed 5 frontend problems',
+    rarity: 'rare',
+    category: 'skill',
+    condition: (user) => user.solvedProblems.filter(p => p.topic === 'Array' || p.topic === 'String').length >= 5
+  },
+  'backend-architect': {
+    name: 'Backend Architect',
+    description: 'Participated in 3 collaborative sessions',
+    rarity: 'epic',
+    category: 'social',
+    condition: (user) => user.contestHistory.length >= 3
+  },
+  'array-master': {
+    name: 'Array Master',
+    description: 'Complete all array problems',
+    rarity: 'rare',
+    category: 'skill',
+    condition: (user) => user.solvedProblems.filter(p => p.topic === 'Array').length >= 10
+  },
+  'recursion-king': {
+    name: 'Recursion King',
+    description: 'Master recursive algorithms',
+    rarity: 'epic',
+    category: 'skill',
+    condition: (user) => user.solvedProblems.filter(p => p.topic === 'Recursion').length >= 8
+  },
+  'speed-demon': {
+    name: 'Speed Demon',
+    description: 'Solve 10 problems in one day',
+    rarity: 'legendary',
+    category: 'milestone',
+    condition: (user) => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return user.solvedProblems.filter(p => p.solvedAt >= today && p.solvedAt < tomorrow).length >= 10;
+    }
+  },
+  'perfectionist': {
+    name: 'Perfectionist',
+    description: 'Solve 50 problems without any wrong submissions',
+    rarity: 'mythic',
+    category: 'milestone',
+    condition: (user) => user.solvedProblems.length >= 50 && user.stats.accuracy >= 100
+  }
+};
+
+// Achievement definitions
+const ACHIEVEMENT_DEFINITIONS = {
+  'bronze-tier': {
+    name: 'Bronze Tier',
+    description: 'Solve 10 problems',
+    tier: 'bronze',
+    target: 10,
+    reward: { coins: 100, xp: 50 }
+  },
+  'silver-tier': {
+    name: 'Silver Tier',
+    description: 'Solve 50 problems',
+    tier: 'silver',
+    target: 50,
+    reward: { coins: 300, xp: 150 }
+  },
+  'gold-tier': {
+    name: 'Gold Tier',
+    description: 'Solve 100 problems',
+    tier: 'gold',
+    target: 100,
+    reward: { coins: 600, xp: 300, badge: 'century-club' }
+  },
+  'platinum-tier': {
+    name: 'Platinum Tier',
+    description: 'Solve 500 problems',
+    tier: 'platinum',
+    target: 500,
+    reward: { coins: 2000, xp: 1000, badge: 'legendary-solver' }
+  }
+};
+
+// Helper functions for badges and achievements
+async function checkAndAwardBadges(user) {
+  if (!user.rewards) return;
+  
+  for (const [badgeId, badgeDef] of Object.entries(BADGE_DEFINITIONS)) {
+    const alreadyEarned = user.rewards.badges.some(badge => badge.badgeId === badgeId);
+    if (!alreadyEarned && badgeDef.condition(user)) {
+      user.rewards.badges.push({
+        badgeId,
+        name: badgeDef.name,
+        description: badgeDef.description,
+        rarity: badgeDef.rarity,
+        earnedAt: new Date(),
+        category: badgeDef.category
+      });
+
+      // Award coins for badge
+      const badgeReward = getBadgeReward(badgeDef.rarity);
+      user.rewards.coins += badgeReward;
+      user.rewards.xp += badgeReward * 2;
+
+      user.rewards.transactionHistory.push({
+        type: 'reward',
+        amount: badgeReward,
+        description: `Earned badge: ${badgeDef.name}`,
+        source: 'badge'
+      });
+    }
+  }
+}
+
+async function checkAndUpdateAchievements(user) {
+  if (!user.rewards) return;
+  
+  for (const [achievementId, achievementDef] of Object.entries(ACHIEVEMENT_DEFINITIONS)) {
+    let existingAchievement = user.rewards.achievements.find(a => a.achievementId === achievementId);
+    
+    if (!existingAchievement) {
+      existingAchievement = {
+        achievementId,
+        name: achievementDef.name,
+        description: achievementDef.description,
+        tier: achievementDef.tier,
+        progress: 0,
+        target: achievementDef.target,
+        completed: false,
+        reward: achievementDef.reward
+      };
+      user.rewards.achievements.push(existingAchievement);
+    }
+
+    if (!existingAchievement.completed) {
+      existingAchievement.progress = user.solvedProblems.length;
+      
+      if (existingAchievement.progress >= existingAchievement.target) {
+        existingAchievement.completed = true;
+        existingAchievement.completedAt = new Date();
+        
+        // Award rewards
+        user.rewards.coins += existingAchievement.reward.coins;
+        user.rewards.xp += existingAchievement.reward.xp;
+        
+        user.rewards.transactionHistory.push({
+          type: 'reward',
+          amount: existingAchievement.reward.coins,
+          description: `Achievement: ${existingAchievement.name}`,
+          source: 'achievement'
+        });
+      }
+    }
+  }
+}
+
+function getBadgeReward(rarity) {
+  const rewards = {
+    'common': 25,
+    'rare': 50,
+    'epic': 100,
+    'legendary': 200,
+    'mythic': 500
+  };
+  return rewards[rarity] || 25;
 }
 
 module.exports = router;

@@ -618,53 +618,98 @@ async function checkAndDetermineWinner(room, problemData) {
 async function executeCode(code, language, testCases) {
   console.log(`Executing ${language} code against ${testCases.length} test cases`);
   
-  // Simple evaluation logic for basic cases
+  const { spawn } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  function trimOutput(s) {
+    return String(s ?? '')
+      .replace(/\r/g, '')
+      .replace(/\n+$/g, '')
+      .trim();
+  }
+
+  async function runOnce({ lang, code, input, timeLimitMs }) {
+    return new Promise((resolve) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skypad-'));
+      let filePath;
+      let child;
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+
+      try {
+        if (lang === 'python') {
+          filePath = path.join(tmpDir, 'Main.py');
+          fs.writeFileSync(filePath, code, 'utf8');
+          child = spawn('python', [filePath], { stdio: ['pipe', 'pipe', 'pipe'] });
+        } else if (lang === 'javascript' || lang === 'js') {
+          filePath = path.join(tmpDir, 'main.js');
+          fs.writeFileSync(filePath, code, 'utf8');
+          child = spawn(process.execPath, [filePath], { stdio: ['pipe', 'pipe', 'pipe'] });
+        } else {
+          return resolve({ success: false, output: '', error: 'Language not supported', timeMs: 0, memory: 0 });
+        }
+      } catch (err) {
+        return resolve({ success: false, output: '', error: err.message, timeMs: 0, memory: 0 });
+      }
+
+      const start = Date.now();
+      const to = setTimeout(() => {
+        timedOut = true;
+        try { child.kill('SIGKILL'); } catch {}
+      }, Math.max(1000, timeLimitMs || 3000));
+
+      child.stdout.on('data', (d) => (stdout += d.toString()));
+      child.stderr.on('data', (d) => (stderr += d.toString()));
+
+      child.on('error', (err) => {
+        clearTimeout(to);
+        resolve({ success: false, output: '', error: err.message, timeMs: Date.now() - start, memory: 0 });
+      });
+
+      child.on('close', (codeExit) => {
+        clearTimeout(to);
+        const elapsed = Date.now() - start;
+        if (timedOut) {
+          resolve({ success: false, output: trimOutput(stdout), error: 'Time Limit Exceeded', timeMs: elapsed, memory: 0 });
+        } else if (codeExit !== 0 && stderr) {
+          resolve({ success: false, output: trimOutput(stdout), error: trimOutput(stderr), timeMs: elapsed, memory: 0 });
+        } else {
+          resolve({ success: true, output: trimOutput(stdout), error: '', timeMs: elapsed, memory: 0 });
+        }
+      });
+
+      // Write input and end
+      if (input != null) {
+        child.stdin.write(String(input));
+      }
+      child.stdin.end();
+    });
+  }
+
   const results = [];
+  const lang = String(language).toLowerCase();
+  const timeLimitMs = 3000; // 3 seconds default
   
   for (let i = 0; i < testCases.length; i++) {
     const testCase = testCases[i];
-    let passed = false;
-    let actualOutput = '';
-    let executionTime = Math.random() * 100 + 10; // Simulate execution time
+    const input = testCase.input ?? testCase.stdin ?? '';
+    const expected = trimOutput(testCase.output ?? testCase.expectedOutput ?? '');
     
-    try {
-      // Basic evaluation for simple cases
-      if (language === 'javascript') {
-        // For JavaScript, try to execute basic logic
-        if (code.includes('console.log') && code.includes('Hello World')) {
-          actualOutput = 'Hello World';
-          passed = actualOutput.trim() === testCase.expectedOutput.trim();
-        } else {
-          // Random pass/fail for demonstration
-          passed = Math.random() > 0.3; // 70% pass rate
-          actualOutput = passed ? testCase.expectedOutput : 'Wrong Answer';
-        }
-      } else if (language === 'python') {
-        // For Python
-        if (code.includes('print') && code.includes('Hello World')) {
-          actualOutput = 'Hello World';
-          passed = actualOutput.trim() === testCase.expectedOutput.trim();
-        } else {
-          passed = Math.random() > 0.3;
-          actualOutput = passed ? testCase.expectedOutput : 'Wrong Answer';
-        }
-      } else {
-        // For other languages, random evaluation
-        passed = Math.random() > 0.4; // 60% pass rate
-        actualOutput = passed ? testCase.expectedOutput : 'Wrong Answer';
-      }
-    } catch (error) {
-      passed = false;
-      actualOutput = `Runtime Error: ${error.message}`;
-    }
+    const execRes = await runOnce({ lang, code, input, timeLimitMs });
+    const actual = trimOutput(execRes.output);
+    const passed = execRes.success && actual === expected;
     
     results.push({
       testCaseIndex: i,
-      input: testCase.input,
-      expectedOutput: testCase.expectedOutput,
-      actualOutput,
+      input,
+      expectedOutput: expected,
+      actualOutput: actual,
       passed,
-      executionTime,
+      error: execRes.error || undefined,
+      executionTime: execRes.timeMs,
       isSample: i < 2 // First 2 are sample tests
     });
   }

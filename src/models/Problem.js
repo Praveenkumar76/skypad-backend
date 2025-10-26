@@ -13,8 +13,9 @@ const problemSchema = new mongoose.Schema(
     topic: { 
       type: String, 
       enum: ['Array', 'String', 'Tree', 'Graph', 'Dynamic Programming', 'Linked List', 'Stack', 'Queue', 'Greedy', 'Recursion'],
-      required: true 
+      required: false 
     },
+    tags: [{ type: String }],
     constraints: { type: String },
     sampleTestCases: [{
       input: { type: String, required: true },
@@ -26,6 +27,8 @@ const problemSchema = new mongoose.Schema(
       expectedOutput: { type: String, required: true }
     }],
     allowedLanguages: [{ type: String }],
+    timeLimit: { type: Number, default: 1000 }, // in milliseconds
+    memoryLimit: { type: Number, default: 256 }, // in MB
     points: { type: Number, default: 10 },
     isActive: { type: Boolean, default: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

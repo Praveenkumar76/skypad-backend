@@ -1,8 +1,18 @@
 const express = require('express');
+const { spawnSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const Problem = require('../models/Problem');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Create temp directory for code execution
+const TEMP_DIR = path.join(__dirname, '..', '..', 'temp_code');
+if (!fs.existsSync(TEMP_DIR)) {
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
 
 // GET /api/problems - Get all problems (public)
 router.get('/', async (req, res) => {
@@ -20,7 +30,7 @@ router.get('/', async (req, res) => {
       });
     }
 
-    const { difficulty, search, page = 1, limit = 10 } = req.query;
+    const { difficulty, search, page = 1, limit = 0 } = req.query;
     const query = { isActive: true };
     
     if (difficulty) {
@@ -31,12 +41,18 @@ router.get('/', async (req, res) => {
       query.$text = { $search: search };
     }
     
-    const problems = await Problem.find(query)
+    // Build query with optional pagination
+    let problemsQuery = Problem.find(query)
       .select('-hiddenTestCases -__v')
       .populate('createdBy', 'username fullName')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .sort({ createdAt: -1 });
+    
+    // Only apply pagination if limit is specified and greater than 0
+    if (limit > 0) {
+      problemsQuery = problemsQuery.limit(limit * 1).skip((page - 1) * limit);
+    }
+    
+    const problems = await problemsQuery;
     
     const total = await Problem.countDocuments(query);
     
@@ -52,7 +68,7 @@ router.get('/', async (req, res) => {
     
     res.json({
       problems: mappedProblems,
-      totalPages: Math.ceil(total / limit),
+      totalPages: limit > 0 ? Math.ceil(total / limit) : 1,
       currentPage: page,
       total
     });
@@ -101,10 +117,6 @@ router.post('/', authenticateToken, async (req, res) => {
     if (!title || !description || !difficulty || !constraints) {
       return res.status(400).json({ message: 'Title, description, difficulty, and constraints are required' });
     }
-
-    if (!topic) {
-      return res.status(400).json({ message: 'Topic is required' });
-    }
     
     if (!sampleTestCases || sampleTestCases.length === 0) {
       return res.status(400).json({ message: 'At least one sample test case is required' });
@@ -142,13 +154,16 @@ router.post('/', authenticateToken, async (req, res) => {
     
     await problem.save();
     
+    // Return full problem data for frontend to sync to DSA sheet
+    const fullProblem = await Problem.findById(problem._id)
+      .select('-hiddenTestCases -__v')
+      .populate('createdBy', 'username fullName');
+    
     res.status(201).json({
       message: 'Problem created successfully',
       problem: {
-        id: problem._id,
-        title: problem.title,
-        difficulty: problem.difficulty,
-        createdAt: problem.createdAt
+        ...fullProblem.toObject(),
+        id: fullProblem.problemId || fullProblem._id.toString()
       }
     });
   } catch (error) {
@@ -213,6 +228,165 @@ router.get('/my/problems', authenticateToken, async (req, res) => {
   }
 });
 
+// Helper function to preprocess output for comparison
+const preprocessOutput = (output) => {
+  if (!output) return '';
+  return output
+    .trim()                           // Remove leading/trailing whitespace
+    .replace(/\r\n/g, '\n')          // Normalize line endings (Windows -> Unix)
+    .replace(/\r/g, '\n')            // Normalize line endings (Mac -> Unix)
+    .replace(/\n+$/g, '')            // Remove trailing newlines
+    .replace(/\s+$/gm, '');          // Remove trailing spaces from each line
+};
+
+// Execute code for Python and JavaScript (interpreted languages)
+const executeInterpreted = (language, code, input, timeLimit) => {
+  let command, args;
+  
+  if (language === 'python') {
+    command = 'python';
+    args = ['-c', code];
+  } else if (language === 'javascript') {
+    command = 'node';
+    args = ['-e', code];
+  }
+  
+  const result = spawnSync(command, args, {
+    input: input,
+    timeout: timeLimit || 1000,
+    encoding: 'utf-8',
+    maxBuffer: 10 * 1024 * 1024 // 10MB
+  });
+  
+  if (result.error) {
+    if (result.error.code === 'ETIMEDOUT') {
+      return { error: 'Time Limit Exceeded', stderr: '', stdout: '' };
+    }
+    return { error: 'Runtime Error', stderr: result.error.message, stdout: '' };
+  }
+  
+  if (result.status !== 0 && result.status !== null) {
+    return { error: 'Runtime Error', stderr: result.stderr, stdout: result.stdout };
+  }
+  
+  return { stdout: result.stdout, stderr: result.stderr, time: result.time };
+};
+
+// Execute compiled languages (C, C++, Java)
+const executeCompiled = (language, code, input, timeLimit) => {
+  const uuid = crypto.randomUUID();
+  let sourceFile, compileCmd, compileArgs, executeCmd, executeArgs;
+  const filesToClean = [];
+  
+  try {
+    // Java special rule: must contain "public class Main"
+    if (language === 'java') {
+      if (!code.includes('public class Main')) {
+        return { 
+          error: 'Compilation Error', 
+          stderr: 'Java code must include "public class Main"',
+          stdout: '' 
+        };
+      }
+      sourceFile = path.join(TEMP_DIR, 'Main.java');
+      filesToClean.push(sourceFile);
+      filesToClean.push(path.join(TEMP_DIR, 'Main.class'));
+      compileCmd = 'javac';
+      compileArgs = [sourceFile];
+      executeCmd = 'java';
+      executeArgs = ['-cp', TEMP_DIR, 'Main'];
+    } else if (language === 'c') {
+      sourceFile = path.join(TEMP_DIR, `${uuid}.c`);
+      const outputFile = path.join(TEMP_DIR, `${uuid}.out`);
+      filesToClean.push(sourceFile, outputFile);
+      compileCmd = 'gcc';
+      compileArgs = [sourceFile, '-o', outputFile];
+      executeCmd = outputFile;
+      executeArgs = [];
+    } else if (language === 'cpp' || language === 'c++') {
+      sourceFile = path.join(TEMP_DIR, `${uuid}.cpp`);
+      const outputFile = path.join(TEMP_DIR, `${uuid}.out`);
+      filesToClean.push(sourceFile, outputFile);
+      compileCmd = 'g++';
+      compileArgs = [sourceFile, '-o', outputFile];
+      executeCmd = outputFile;
+      executeArgs = [];
+    }
+    
+    // Write source code to file
+    fs.writeFileSync(sourceFile, code, 'utf-8');
+    
+    // Compile
+    const compileResult = spawnSync(compileCmd, compileArgs, {
+      encoding: 'utf-8',
+      timeout: 5000 // 5 second compile timeout
+    });
+    
+    if (compileResult.error || compileResult.status !== 0) {
+      return { 
+        error: 'Compilation Error', 
+        stderr: compileResult.stderr || compileResult.error?.message || 'Compilation failed',
+        stdout: '' 
+      };
+    }
+    
+    // Execute
+    const execResult = spawnSync(executeCmd, executeArgs, {
+      input: input,
+      timeout: timeLimit || 1000,
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024
+    });
+    
+    if (execResult.error) {
+      if (execResult.error.code === 'ETIMEDOUT') {
+        return { error: 'Time Limit Exceeded', stderr: '', stdout: '' };
+      }
+      return { error: 'Runtime Error', stderr: execResult.error.message, stdout: '' };
+    }
+    
+    if (execResult.status !== 0 && execResult.status !== null) {
+      return { error: 'Runtime Error', stderr: execResult.stderr, stdout: execResult.stdout };
+    }
+    
+    return { stdout: execResult.stdout, stderr: execResult.stderr };
+    
+  } finally {
+    // Clean up all temporary files
+    filesToClean.forEach(file => {
+      try {
+        if (fs.existsSync(file)) {
+          fs.unlinkSync(file);
+        }
+      } catch (err) {
+        console.error(`Failed to delete ${file}:`, err.message);
+      }
+    });
+  }
+};
+
+// Main execution function
+const executeCode = (language, code, input, timeLimit) => {
+  const normalizedLang = language.toLowerCase();
+  
+  // Validate language
+  const supportedLanguages = ['python', 'javascript', 'c', 'cpp', 'c++', 'java'];
+  if (!supportedLanguages.includes(normalizedLang)) {
+    return { 
+      error: 'Runtime Error', 
+      stderr: `Unsupported language: ${language}`,
+      stdout: '' 
+    };
+  }
+  
+  // Execute based on language type
+  if (normalizedLang === 'python' || normalizedLang === 'javascript') {
+    return executeInterpreted(normalizedLang, code, input, timeLimit);
+  } else {
+    return executeCompiled(normalizedLang === 'c++' ? 'cpp' : normalizedLang, code, input, timeLimit);
+  }
+};
+
 // POST /api/problems/run - Execute code against test cases
 router.post('/run', authenticateToken, async (req, res) => {
   try {
@@ -231,217 +405,42 @@ router.post('/run', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'Language not supported for this problem' });
     }
 
-    // Preprocess function to normalize output strings
-    const preprocessOutput = (output) => {
-      if (!output) return '';
-      return output
-        .trim()                           // Remove leading/trailing whitespace
-        .replace(/\r\n/g, '\n')          // Normalize line endings (Windows -> Unix)
-        .replace(/\r/g, '\n')            // Normalize line endings (Mac -> Unix)
-        .replace(/\n+$/g, '')            // Remove trailing newlines
-        .replace(/\s+$/gm, '')           // Remove trailing spaces from each line
-        .replace(/^\s+/gm, '')           // Remove leading spaces from each line
-        .replace(/\s+/g, ' ');           // Normalize multiple spaces to single space
-    };
-
-    // Mock execution results - properly evaluate Python code
+    // Get time limit from problem or use defaults
+    const timeLimit = problem.timeLimit || (language.toLowerCase() === 'java' ? 2000 : 1000);
+    
+    // Execute code against test cases
     const executeTestCase = (testCase) => {
-      try {
-        // Check for empty or minimal code first
-        const codeLines = code.trim().split('\n').filter(line => line.trim() && !line.trim().startsWith('//') && !line.trim().startsWith('#'));
-        if (codeLines.length === 0 || code.trim().length < 10) {
-          return {
-            input: testCase.input,
-            expectedOutput: testCase.expectedOutput || testCase.output,
-            actualOutput: 'No meaningful code provided',
-            passed: false
-          };
-        }
-        
-        // Get input and expected output with correct field names
-        const input = testCase.input || '';
-        const expectedOutput = testCase.expectedOutput || testCase.output || '';
-        
-        console.log(`\n=== Test Case Debug ===`);
-        console.log(`Input: "${input}"`);
-        console.log(`Expected Output: "${expectedOutput}"`);
-        console.log(`Language: ${language}`);
-        console.log(`Code: ${code.substring(0, 150)}...`);
-        
-        // Simulate what the code would actually output
-        let actualOutput = '';
-        
-        if (language.toLowerCase() === 'python') {
-          // Python execution simulation - parse print statements more carefully
-          const printRegex = /print\s*\(\s*([^)]*)\s*\)/g;
-          let match;
-          
-          while ((match = printRegex.exec(code)) !== null) {
-            let printContent = match[1].trim();
-            
-            console.log(`Found print statement: ${printContent}`);
-            
-            // Handle different print patterns
-            try {
-              // Replace input() with the actual test input value
-              if (printContent.includes('input()')) {
-                // Evaluate the expression with input() replaced
-                let evaluatedContent = printContent;
-                
-                // Handle string concatenation: input() + "something"
-                if (printContent.match(/input\s*\(\s*\)\s*\+/)) {
-                  // Extract parts around the + operator
-                  const parts = printContent.split('+').map(p => p.trim());
-                  let result = '';
-                  for (const part of parts) {
-                    if (part.includes('input()')) {
-                      result += input;
-                    } else {
-                      // Remove quotes from string literals
-                      result += part.replace(/^["']|["']$/g, '');
-                    }
-                  }
-                  actualOutput += result;
-                } else if (printContent === 'input()') {
-                  // Just print(input())
-                  actualOutput += input;
-                } else {
-                  // input() with other operations - try basic evaluation
-                  actualOutput += input;
-                }
-              }
-              // Handle direct string literals: print("Hello World")
-              else if (printContent.match(/^["'][^"']*["']$/)) {
-                actualOutput += printContent.replace(/^["']|["']$/g, '');
-              }
-              // Handle f-strings: print(f"text")
-              else if (printContent.match(/^f["'][^"']*["']$/)) {
-                actualOutput += printContent.replace(/^f["']|["']$/g, '');
-              }
-              // Handle string concatenation: "Hello" + " " + "World"
-              else if (printContent.includes('+')) {
-                const parts = printContent.split('+').map(p => p.trim());
-                for (const part of parts) {
-                  actualOutput += part.replace(/^["']|["']$/g, '');
-                }
-              }
-              // Handle variables or expressions - can't evaluate, show as-is
-              else {
-                actualOutput += `[Cannot evaluate: ${printContent}]`;
-              }
-            } catch (e) {
-              console.error('Error evaluating print:', e);
-              actualOutput += `[Error: ${printContent}]`;
-            }
-          }
-          
-          // If no print found but code has print keyword
-          if (actualOutput === '' && code.includes('print')) {
-            actualOutput = '[Syntax error in print statement]';
-          }
-          // If no print at all
-          if (actualOutput === '' && !code.includes('print')) {
-            actualOutput = '[No print statement found]';
-          }
-        } 
-        else if (language.toLowerCase() === 'javascript') {
-          // JavaScript execution simulation
-          const consoleRegex = /console\.log\s*\(\s*([^)]*)\s*\)/g;
-          let match;
-          
-          while ((match = consoleRegex.exec(code)) !== null) {
-            let logContent = match[1].trim();
-            
-            // Handle string literals
-            if (logContent.match(/^["'`][^"'`]*["'`]$/)) {
-              actualOutput += logContent.replace(/^["'`]|["'`]$/g, '');
-            }
-            // Handle concatenation
-            else if (logContent.includes('+')) {
-              const parts = logContent.split('+').map(p => p.trim());
-              for (const part of parts) {
-                actualOutput += part.replace(/^["'`]|["'`]$/g, '');
-              }
-            }
-            else {
-              actualOutput += logContent;
-            }
-          }
-          
-          if (actualOutput === '' && code.includes('console.log')) {
-            actualOutput = '[Syntax error in console.log]';
-          }
-          if (actualOutput === '' && !code.includes('console.log')) {
-            actualOutput = '[No console.log found]';
-          }
-        }
-        else if (language.toLowerCase() === 'java') {
-          // Java execution simulation
-          const printRegex = /System\.out\.println?\s*\(\s*([^)]*)\s*\)/g;
-          let match;
-          
-          while ((match = printRegex.exec(code)) !== null) {
-            let printContent = match[1].trim();
-            actualOutput += printContent.replace(/^["]|["]$/g, '');
-          }
-          
-          if (actualOutput === '') {
-            actualOutput = '[No System.out.print found]';
-          }
-        }
-        else if (language.toLowerCase() === 'c++' || language.toLowerCase() === 'cpp') {
-          // C++ execution simulation
-          const coutRegex = /cout\s*<<\s*([^;]*);/g;
-          let match;
-          
-          while ((match = coutRegex.exec(code)) !== null) {
-            let coutContent = match[1].trim();
-            // Split by << operator
-            const parts = coutContent.split('<<').map(p => p.trim());
-            for (const part of parts) {
-              if (part !== 'cout') {
-                actualOutput += part.replace(/^["]|["]$/g, '').replace(/endl/g, '\n');
-              }
-            }
-          }
-          
-          if (actualOutput === '') {
-            actualOutput = '[No cout statement found]';
-          }
-        }
-        else {
-          actualOutput = `[${language} execution not fully supported yet]`;
-        }
-        
-        console.log(`Simulated Output: "${actualOutput}"`);
-        
-        // Compare outputs using preprocessing
-        const processedActualOutput = preprocessOutput(actualOutput);
-        const processedExpectedOutput = preprocessOutput(expectedOutput);
-        
-        const passed = processedActualOutput === processedExpectedOutput;
-        
-        console.log(`Test Result - Passed: ${passed}`);
-        console.log(`Expected (preprocessed): "${processedExpectedOutput}"`);
-        console.log(`Actual (preprocessed): "${processedActualOutput}"`);
-        console.log(`Match: ${processedActualOutput === processedExpectedOutput}`);
-        console.log(`======================\n`);
-        
+      const input = testCase.input || '';
+      const expectedOutput = testCase.expectedOutput || '';
+      
+      const startTime = Date.now();
+      const result = executeCode(language, code, input, timeLimit);
+      const executionTime = Date.now() - startTime;
+      
+      // Handle errors
+      if (result.error) {
         return {
-          input: testCase.input || '',
-          expectedOutput: testCase.expectedOutput || testCase.output || '',
-          actualOutput: actualOutput || '[No output]',
-          passed
-        };
-      } catch (error) {
-        console.error('Execution error:', error);
-        return {
-          input: testCase.input || '',
-          expectedOutput: testCase.expectedOutput || testCase.output || '',
-          actualOutput: 'Runtime Error: ' + error.message,
-          passed: false
+          input,
+          expectedOutput,
+          actualOutput: `${result.error}${result.stderr ? ': ' + result.stderr : ''}`,
+          passed: false,
+          executionTime
         };
       }
+      
+      // Compare outputs
+      const actualOutput = result.stdout || '';
+      const processedActual = preprocessOutput(actualOutput);
+      const processedExpected = preprocessOutput(expectedOutput);
+      const passed = processedActual === processedExpected;
+      
+      return {
+        input,
+        expectedOutput,
+        actualOutput,
+        passed,
+        executionTime
+      };
     };
     
     const sampleResults = problem.sampleTestCases.map(executeTestCase);
@@ -450,13 +449,20 @@ router.post('/run', authenticateToken, async (req, res) => {
     const totalTests = sampleResults.length + hiddenResults.length;
     const passedTests = [...sampleResults, ...hiddenResults].filter(r => r.passed).length;
     const score = Math.round((passedTests / totalTests) * 100);
+    
+    // Calculate max execution time
+    const allResults = [...sampleResults, ...hiddenResults];
+    const maxExecutionTime = Math.max(...allResults.map(r => r.executionTime || 0));
+    
+    // Mock memory usage (realistic range)
+    const memoryUsed = Math.random() * 50 + 10; // 10-60 MB
 
     res.json({
       sampleResults,
       hiddenResults,
       score,
-      executionTime: Math.random() * 1000, // Mock execution time
-      memoryUsed: Math.random() * 100 // Mock memory usage
+      executionTime: maxExecutionTime,
+      memoryUsed
     });
   } catch (error) {
     console.error('Code execution error:', error);

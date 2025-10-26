@@ -704,15 +704,102 @@ router.get('/:contestId/problems/:problemId', async (req, res) => {
 async function executeCode(code, language, testCases) {
   console.log(`Executing ${language} code against ${testCases.length} test cases`);
   
-  // Mock: Return all passed for now
-  return testCases.map((testCase, index) => ({
-    testCaseIndex: index,
-    input: testCase.input,
-    expectedOutput: testCase.output, // Using 'output' field from contest question format
-    actualOutput: testCase.output, // Mock: same as expected for now
-    passed: true,
-    executionTime: Math.random() * 100
-  }));
+  const { spawn } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  function trimOutput(s) {
+    return String(s ?? '')
+      .replace(/\r/g, '')
+      .replace(/\n+$/g, '')
+      .trim();
+  }
+
+  async function runOnce({ lang, code, input, timeLimitMs }) {
+    return new Promise((resolve) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skypad-'));
+      let filePath;
+      let child;
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+
+      try {
+        if (lang === 'python') {
+          filePath = path.join(tmpDir, 'Main.py');
+          fs.writeFileSync(filePath, code, 'utf8');
+          child = spawn('python', [filePath], { stdio: ['pipe', 'pipe', 'pipe'] });
+        } else if (lang === 'javascript' || lang === 'js') {
+          filePath = path.join(tmpDir, 'main.js');
+          fs.writeFileSync(filePath, code, 'utf8');
+          child = spawn(process.execPath, [filePath], { stdio: ['pipe', 'pipe', 'pipe'] });
+        } else {
+          return resolve({ success: false, output: '', error: 'Language not supported', timeMs: 0, memory: 0 });
+        }
+      } catch (err) {
+        return resolve({ success: false, output: '', error: err.message, timeMs: 0, memory: 0 });
+      }
+
+      const start = Date.now();
+      const to = setTimeout(() => {
+        timedOut = true;
+        try { child.kill('SIGKILL'); } catch {}
+      }, Math.max(1000, timeLimitMs || 3000));
+
+      child.stdout.on('data', (d) => (stdout += d.toString()));
+      child.stderr.on('data', (d) => (stderr += d.toString()));
+
+      child.on('error', (err) => {
+        clearTimeout(to);
+        resolve({ success: false, output: '', error: err.message, timeMs: Date.now() - start, memory: 0 });
+      });
+
+      child.on('close', (codeExit) => {
+        clearTimeout(to);
+        const elapsed = Date.now() - start;
+        if (timedOut) {
+          resolve({ success: false, output: trimOutput(stdout), error: 'Time Limit Exceeded', timeMs: elapsed, memory: 0 });
+        } else if (codeExit !== 0 && stderr) {
+          resolve({ success: false, output: trimOutput(stdout), error: trimOutput(stderr), timeMs: elapsed, memory: 0 });
+        } else {
+          resolve({ success: true, output: trimOutput(stdout), error: '', timeMs: elapsed, memory: 0 });
+        }
+      });
+
+      // Write input and end
+      if (input != null) {
+        child.stdin.write(String(input));
+      }
+      child.stdin.end();
+    });
+  }
+
+  const results = [];
+  const lang = String(language).toLowerCase();
+  const timeLimitMs = 3000; // 3 seconds default
+  
+  for (let i = 0; i < testCases.length; i++) {
+    const testCase = testCases[i];
+    const input = testCase.input ?? testCase.stdin ?? '';
+    const expected = trimOutput(testCase.output ?? testCase.expectedOutput ?? '');
+    
+    const execRes = await runOnce({ lang, code, input, timeLimitMs });
+    const actual = trimOutput(execRes.output);
+    const passed = execRes.success && actual === expected;
+    
+    results.push({
+      testCaseIndex: i,
+      input,
+      expectedOutput: expected,
+      actualOutput: actual,
+      passed,
+      error: execRes.error || undefined,
+      executionTime: execRes.timeMs
+    });
+  }
+  
+  return results;
 }
 
 module.exports = router;

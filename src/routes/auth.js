@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const LoginLog = require('../models/LoginLog');
 const { OAuth2Client } = require('google-auth-library');
+const passport = require('../config/passport');
 
 const router = express.Router();
 
@@ -177,5 +178,78 @@ router.post('/google', async (req, res) => {
     return res.status(401).json({ message: 'Google authentication failed' });
   }
 });
+
+// ===================================
+// PASSPORT.JS GOOGLE OAUTH ROUTES
+// ===================================
+
+// Route 1: Initiate Google OAuth flow
+// Frontend will redirect to this URL: window.location.href = '/api/auth/google/oauth'
+router.get('/google/oauth', (req, res, next) => {
+  // Check if Google OAuth is configured
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    return res.redirect(`${frontendUrl}/login?error=oauth_not_configured`);
+  }
+  
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    session: false // We use JWT, not sessions
+  })(req, res, next);
+});
+
+// Route 2: Google OAuth callback
+// Google redirects here after user grants permission
+router.get('/google/callback', (req, res, next) => {
+  // Check if Google OAuth is configured
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    return res.redirect(`${frontendUrl}/login?error=oauth_not_configured`);
+  }
+  
+  passport.authenticate('google', { 
+    failureRedirect: process.env.FRONTEND_URL || 'http://localhost:5173/login?error=oauth_failed',
+    session: false 
+  })(req, res, next);
+}, async (req, res) => {
+    try {
+      // req.user is populated by Passport after successful authentication
+      const user = req.user;
+      
+      // Update last login time
+      user.lastLoginAt = new Date();
+      await user.save();
+
+      // Log the login
+      await LoginLog.create({
+        userId: user._id,
+        ip: req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || req.ip,
+        userAgent: req.headers['user-agent'] || '',
+        profilePictureUrl: user.profilePictureUrl || null
+      });
+
+      // Create JWT token
+      const safeFullName = user.fullName || user.username;
+      const token = createToken({ 
+        sub: user.id, 
+        email: user.email, 
+        username: user.username, 
+        fullName: safeFullName 
+      });
+
+      // Redirect to frontend with token
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const redirectUrl = `${frontendUrl}/auth/callback?token=${token}`;
+      
+      console.log('[OAuth] Redirecting to:', redirectUrl);
+      res.redirect(redirectUrl);
+      
+    } catch (error) {
+      console.error('[OAuth] Callback error:', error);
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      res.redirect(`${frontendUrl}/login?error=auth_failed`);
+    }
+  }
+);
 
 module.exports = router;

@@ -2,10 +2,15 @@ const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema(
   {
+    googleId: { 
+      type: String, 
+      unique: true, 
+      sparse: true // Allows null values for non-Google users while maintaining uniqueness
+    },
     email: { type: String, required: true, unique: true, lowercase: true, index: true },
     username: { type: String, required: true },
     fullName: { type: String },
-    passwordHash: { type: String, required: true },
+    passwordHash: { type: String, required: false }, // Optional for OAuth users
     profilePictureUrl: { type: String },
     lastLoginAt: { type: Date },
     
@@ -103,7 +108,90 @@ const userSchema = new mongoose.Schema(
     dailyStreaks: [{
       date: { type: String, required: true }, // YYYY-MM-DD format
       timestamp: { type: Date, default: Date.now }
-    }]
+    }],
+
+    // Rewards System
+    rewards: {
+      coins: { type: Number, default: 0 },
+      xp: { type: Number, default: 0 },
+      level: { type: Number, default: 1 },
+      badges: [{
+        badgeId: { type: String, required: true },
+        name: { type: String, required: true },
+        description: { type: String, required: true },
+        rarity: { type: String, enum: ['common', 'rare', 'epic', 'legendary', 'mythic'], required: true },
+        earnedAt: { type: Date, default: Date.now },
+        category: { type: String, required: true }
+      }],
+      ownedItems: [{
+        itemId: { type: String, required: true },
+        itemType: { type: String, enum: ['theme', 'booster', 'cosmetic'], required: true },
+        name: { type: String, required: true },
+        purchasedAt: { type: Date, default: Date.now },
+        isActive: { type: Boolean, default: false }
+      }],
+      activeBoosters: [{
+        boosterId: { type: String, required: true },
+        type: { type: String, enum: ['xp', 'coins'], required: true },
+        multiplier: { type: Number, required: true },
+        expiresAt: { type: Date, required: true },
+        activatedAt: { type: Date, default: Date.now }
+      }],
+      achievements: [{
+        achievementId: { type: String, required: true },
+        name: { type: String, required: true },
+        description: { type: String, required: true },
+        tier: { type: String, enum: ['bronze', 'silver', 'gold', 'platinum'], required: true },
+        progress: { type: Number, default: 0 },
+        target: { type: Number, required: true },
+        completed: { type: Boolean, default: false },
+        completedAt: { type: Date },
+        reward: {
+          coins: { type: Number, default: 0 },
+          xp: { type: Number, default: 0 },
+          badge: { type: String }
+        }
+      }],
+      weeklyChallenges: [{
+        challengeId: { type: String, required: true },
+        name: { type: String, required: true },
+        description: { type: String, required: true },
+        target: { type: Number, required: true },
+        progress: { type: Number, default: 0 },
+        reward: { type: Number, required: true },
+        weekStart: { type: Date, required: true },
+        weekEnd: { type: Date, required: true },
+        completed: { type: Boolean, default: false }
+      }],
+      monthlyChallenges: [{
+        challengeId: { type: String, required: true },
+        name: { type: String, required: true },
+        description: { type: String, required: true },
+        target: { type: Number, required: true },
+        progress: { type: Number, default: 0 },
+        reward: { type: Number, required: true },
+        monthStart: { type: Date, required: true },
+        monthEnd: { type: Date, required: true },
+        completed: { type: Boolean, default: false }
+      }],
+      transactionHistory: [{
+        type: { type: String, enum: ['earned', 'spent', 'reward'], required: true },
+        amount: { type: Number, required: true },
+        description: { type: String, required: true },
+        timestamp: { type: Date, default: Date.now },
+        source: { type: String, required: true }
+      }],
+      dailyRewards: {
+        lastClaimed: { type: Date },
+        streak: { type: Number, default: 0 },
+        nextReward: { type: Number, default: 1 }
+      },
+      profileCustomization: {
+        frameStyle: { type: String, default: 'default' },
+        theme: { type: String, default: 'default' },
+        avatar: { type: String }
+      }
+    }
   },
   { timestamps: true }
 );
