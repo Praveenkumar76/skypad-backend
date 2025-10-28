@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import {mongoose} from "mongoose";
 
 const problemSchema = new mongoose.Schema(
   {
@@ -46,4 +46,5 @@ const problemSchema = new mongoose.Schema(
 problemSchema.index({ difficulty: 1, topic: 1 });
 problemSchema.index({ isActive: 1 });
 
-module.exports = mongoose.models.Problem || mongoose.model('Problem', problemSchema);
+const Problem = mongoose.models.Problem || mongoose.model('Problem', problemSchema);
+export default Problem;

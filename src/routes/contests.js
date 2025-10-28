@@ -1,16 +1,20 @@
-const express = require('express');
-const Contest = require('../models/Contest');
-const ContestRegistration = require('../models/ContestRegistration');
-const ContestSubmission = require('../models/ContestSubmission');
-const Problem = require('../models/Problem');
-const { authenticateToken } = require('../middleware/auth');
-const { broadcastLeaderboardUpdate } = require('../socketServer');
+import express from "express";
+import Contest from "../models/Contest.js";
+import ContestRegistration from "../models/ContestRegistration.js";
+import ContestSubmission from "../models/ContestSubmission.js";
+import Problem from "../models/Problem.js";
+import authenticateToken from "../middleware/auth.js";
+import {broadcastLeaderboardUpdate} from "../socketServer.js";
+import {mongoose} from "mongoose";
+import {spawn} from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 
 const router = express.Router();
 
 // Check database connection
 const checkDB = (res) => {
-  const mongoose = require('mongoose');
   if (mongoose.connection.readyState !== 1) {
     res.status(503).json({ message: 'Database not available. Please try again later.' });
     return false;
@@ -704,10 +708,7 @@ router.get('/:contestId/problems/:problemId', async (req, res) => {
 async function executeCode(code, language, testCases) {
   console.log(`Executing ${language} code against ${testCases.length} test cases`);
   
-  const { spawn } = require('child_process');
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
+  
 
   function trimOutput(s) {
     return String(s ?? '')
@@ -802,5 +803,4 @@ async function executeCode(code, language, testCases) {
   return results;
 }
 
-module.exports = router;
-
+export default router;

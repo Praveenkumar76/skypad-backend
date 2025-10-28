@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import {mongoose} from "mongoose";
 
 const contestSchema = new mongoose.Schema(
   {
@@ -163,5 +163,5 @@ contestSchema.methods.getState = function() {
   return 'ended';
 };
 
-module.exports = mongoose.models.Contest || mongoose.model('Contest', contestSchema);
-
+const Contest = mongoose.models.Contest || mongoose.model('Contest', contestSchema);
+export default Contest;

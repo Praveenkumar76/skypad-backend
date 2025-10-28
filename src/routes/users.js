@@ -1,7 +1,7 @@
-const express = require('express');
-const User = require('../models/User');
-const Problem = require('../models/Problem');
-const { authenticateToken } = require('../middleware/auth');
+import express from "express";
+import User from "../models/User.js";
+import Problem  from "../models/Problem.js";
+import authenticateToken from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -404,7 +404,7 @@ async function getRecentActivity(user) {
     .map(contest => ({
       type: 'contest',
       title: contest.contestName,
-      status: contest.isWon ? 'Won' : `Ranked ${contest.rank}`,
+      status: `contest.isWon ? 'Won' : Ranked ${contest.rank}`,
       time: formatLastActive(contest.participatedAt),
       points: contest.points
     }));
@@ -747,4 +747,4 @@ function getBadgeReward(rarity) {
   return rewards[rarity] || 25;
 }
 
-module.exports = router;
+export default router;

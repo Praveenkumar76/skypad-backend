@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "main": "src/server.js",
+  "type":"module",
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",

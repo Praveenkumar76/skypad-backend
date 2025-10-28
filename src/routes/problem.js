@@ -1,15 +1,21 @@
-const express = require('express');
-const { spawnSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const Problem = require('../models/Problem');
-const { authenticateToken } = require('../middleware/auth');
+import express from "express";
+import dotenv from "dotenv";
+import { spawnSync } from "child_process";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import { fileURLToPath } from "url";  // ✅ Add this
+import Problem from "../models/Problem.js";
+import authenticateToken from "../middleware/auth.js";
+import { mongoose } from "mongoose";
+
+const __filename = fileURLToPath(import.meta.url); // ✅ Add this
+const __dirname = path.dirname(__filename);       // ✅ Add this
 
 const router = express.Router();
-
+const TEMP_DIR = path.join(__dirname, "temp");
 // Create temp directory for code execution
-const TEMP_DIR = path.join(__dirname, '..', '..', 'temp_code');
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
@@ -18,7 +24,6 @@ if (!fs.existsSync(TEMP_DIR)) {
 router.get('/', async (req, res) => {
   try {
     // Check if database is connected
-    const mongoose = require('mongoose');
     if (mongoose.connection.readyState !== 1) {
       // Return empty array when DB is not connected
       return res.json({
@@ -470,4 +475,4 @@ router.post('/run', authenticateToken, async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

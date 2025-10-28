@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import {mongoose} from "mongoose";
 
 const contestSubmissionSchema = new mongoose.Schema(
   {
@@ -60,5 +60,5 @@ contestSubmissionSchema.index({ contestId: 1, userId: 1, timestamp: -1 });
 contestSubmissionSchema.index({ contestId: 1, problemId: 1, status: 1 });
 contestSubmissionSchema.index({ userId: 1, timestamp: -1 });
 
-module.exports = mongoose.models.ContestSubmission || mongoose.model('ContestSubmission', contestSubmissionSchema);
-
+const ContestSubmission = mongoose.models.ContestSubmission || mongoose.model('ContestSubmission', contestSubmissionSchema);
+export default ContestSubmission;

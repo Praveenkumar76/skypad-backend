@@ -1,7 +1,10 @@
-const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
-const ChallengeRoom = require('./models/ChallengeRoom');
+import { Server } from "socket.io";
+import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
+import ContestRegistration from "./models/ContestRegistration.js";
+import Problem from "./models/Problem.js";
+import ChallengeRoom from "./models/ChallengeRoom.js";
+import { checkAndDetermineWinner } from "./routes/challenges.js";
 
 let io;
 const roomTimers = new Map(); // Store room timers
@@ -337,8 +340,6 @@ function sleep(ms) {
 function startMatchTimeoutChecker() {
   setInterval(async () => {
     try {
-      const ChallengeRoom = require('./models/ChallengeRoom');
-      const Problem = require('./models/Problem');
       
       // Find matches that are in progress and might be expired
       const inProgressRooms = await ChallengeRoom.find({ 
@@ -359,7 +360,7 @@ function startMatchTimeoutChecker() {
         }
         
         if (problemData) {
-          const { checkAndDetermineWinner } = require('./routes/challenges');
+          
           await checkAndDetermineWinner(room, problemData);
         }
       }
@@ -376,9 +377,7 @@ async function broadcastLeaderboardUpdate(contestId) {
   }
 
   try {
-    const ContestRegistration = require('./models/ContestRegistration');
-    
-    const registrations = await ContestRegistration.find({ contestId })
+      const registrations = await ContestRegistration.find({ contestId })
       .populate('userId', 'username fullName')
       .sort({ score: -1, lastSubmissionTime: 1 })
       .limit(100);
@@ -405,7 +404,7 @@ function getIO() {
   return io;
 }
 
-module.exports = {
+export {
   initializeSocketServer,
   setLobbyTimer,
   clearLobbyTimer,
@@ -414,4 +413,3 @@ module.exports = {
   startMatchFromReady,
   getIO
 };
-

@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import {mongoose} from "mongoose";
 
 const contestRegistrationSchema = new mongoose.Schema(
   {
@@ -51,5 +51,6 @@ contestRegistrationSchema.index({ contestId: 1, userId: 1 }, { unique: true });
 // Index for leaderboard queries
 contestRegistrationSchema.index({ contestId: 1, score: -1, lastSubmissionTime: 1 });
 
-module.exports = mongoose.models.ContestRegistration || mongoose.model('ContestRegistration', contestRegistrationSchema);
+const ContestRegistration = mongoose.models.ContestRegistration || mongoose.model('ContestRegistration', contestRegistrationSchema);
 
+export default ContestRegistration;

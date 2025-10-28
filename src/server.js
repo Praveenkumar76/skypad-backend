@@ -1,18 +1,27 @@
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const path = require('path');
-const http = require('http');
-const { spawn } = require('child_process');
-require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import morgan from "morgan";
+import path from "path";
+import http from "http";
+import { spawn } from "child_process";
+import dotenv from "dotenv";
 
-const { connectToDatabase } = require('./db/mongoose');
-const { initializeSocketServer } = require('./socketServer');
+import { connectToDatabase } from "./db/mongoose.js";
+import { initializeSocketServer } from "./socketServer.js";
+import authRouter from "./routes/auth.js";
+import usersRouter from "./routes/users.js";
+import problemsRouter from "./routes/problem.js";
+import challengesRouter, { checkAndDetermineWinner } from "./routes/challenges.js";
+import contestsRouter from "./routes/contests.js";
+import rewardsRouter from "./routes/rewards.js";
+import passport from "./config/passport.js";
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config();
 // Initialize Passport
-const passport = require('./config/passport');
-
 const app = express();
 const httpServer = http.createServer(app);
 
@@ -56,12 +65,6 @@ app.use(passport.initialize());
 // Note: We don't use passport.session() because we're using JWT tokens instead of sessions
 
 // Routers
-const authRouter = require('./routes/auth');
-const usersRouter = require('./routes/users');
-const problemsRouter = require('./routes/problem');
-const challengesRouter = require('./routes/challenges');
-const contestsRouter = require('./routes/contests');
-const rewardsRouter = require('./routes/rewards');
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/problems', problemsRouter);
@@ -95,7 +98,7 @@ initializeSocketServer(httpServer);
 let codeEditorProcess = null;
 function startCodeEditorServer() {
   console.log('\n🚀 Starting Code Editor Server...');
-  
+  console.log(process.env.MONGODB_URI)
   const codeEditorPath = path.join(__dirname, 'codeEditorServer.js');
   
   // Use nodemon in development, node in production
@@ -157,5 +160,3 @@ connectToDatabase().then(() => {
     startCodeEditorServer();
   });
 });
-
-

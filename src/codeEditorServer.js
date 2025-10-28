@@ -1,10 +1,10 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
-const { exec, spawn } = require('child_process');
-const fs = require('fs').promises;
-const path = require('path');
+import express from "express";
+import http from "http";
+import {Server} from "socket.io";
+import cors from "cors";
+import { exec, spawn } from "child_process";
+import { promises as fs } from 'fs';
+import path from "path";
 
 const app = express();
 const server = http.createServer(app);
@@ -418,5 +418,4 @@ server.listen(PORT, () => {
   console.log(`📝 Supported languages: ${Object.keys(languageConfigs).join(', ')}`);
   console.log(`🔌 WebSocket endpoint: ws://localhost:${PORT}`);
 });
-
-module.exports = { server, io };
+export default { server, io };
