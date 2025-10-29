@@ -13,9 +13,6 @@ function createToken(payload) {
   return jwt.sign(payload, secret, { expiresIn: "7d" });
 }
 
-const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
-const googleClient = googleClientId ? new OAuth2Client(googleClientId) : null;
-
 router.post("/register", async (req, res) => {
   try {
     const { email, username, fullName, password } = req.body || {};
@@ -173,6 +170,8 @@ router.post("/login", async (req, res) => {
 // POST /api/auth/google - Exchange Google ID token for app JWT
 router.post("/google", async (req, res) => {
   try {
+    const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
+    const googleClient = googleClientId ? new OAuth2Client(googleClientId) : null;
     const { idToken } = req.body || {};
     if (!idToken) {
       return res.status(400).json({ message: "idToken is required" });

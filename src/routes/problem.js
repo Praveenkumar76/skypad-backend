@@ -8,14 +8,12 @@ import { fileURLToPath } from "url";  // ✅ Add this
 import Problem from "../models/Problem.js";
 import authenticateToken from "../middleware/auth.js";
 import { mongoose } from "mongoose";
-
-const __filename = fileURLToPath(import.meta.url); // ✅ Add this
-const __dirname = path.dirname(__filename);       // ✅ Add this
+     // ✅ Add this
 
 const router = express.Router();
-const TEMP_DIR = path.join(__dirname, "temp");
+const TEMP_DIR = path.join(process.cwd(), "temp");
 // Create temp directory for code execution
-dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '..', '.env') });
 if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }

@@ -6,18 +6,7 @@ module.exports = {
       cwd: "./",
       env: {
         NODE_ENV: "production",
-        PORT: process.env.PORT || 5000
-      },
-      instances: 1,
-      autorestart: true
-    },
-    {
-      name: "skypad-code-editor",
-      script: "./src/codeEditorServer.js",
-      cwd: "./",
-      env: {
-        NODE_ENV: "production",
-        PORT: process.env.CODE_EDITOR_PORT || 5001
+        PORT: process.env.PORT || 8080
       },
       instances: 1,
       autorestart: true

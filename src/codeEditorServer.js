@@ -4,7 +4,7 @@ import {Server} from "socket.io";
 import cors from "cors";
 import { exec, spawn } from "child_process";
 import { promises as fs } from 'fs';
-import path from "path";
+import path,{ dirname } from "path";
 
 const app = express();
 const server = http.createServer(app);
